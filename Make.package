@@ -1,0 +1,4 @@
+VPATH_LOCATIONS += src
+INCLUDE_LOCATIONS += include
+
+CEXE_sources += main.cpp
