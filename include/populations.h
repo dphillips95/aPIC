@@ -3,15 +3,13 @@
 
 #include <AMReX_REAL.H>
 
-using namespace amrex;
-
 struct Population {
-   Real mass = 0.0;
-   Real charge = 0.0;
-   Real temperature = 0.0;
-   std::vector<Real> velocity = {0.0,0.0,0.0};
-   Real density = 0.0;
-   Real macro = 0.0;
+   amrex::Real mass = 0.0;
+   amrex::Real charge = 0.0;
+   amrex::Real temperature = 0.0;
+   std::vector<amrex::Real> velocity = {0.0,0.0,0.0};
+   amrex::Real density = 0.0;
+   amrex::Real macro = 0.0;
 };
 
 #endif

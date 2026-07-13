@@ -17,6 +17,7 @@ int main(int argc, char* argv[]) {
    {
 
       constexpr int nghost = 1;
+      constexpr IntVect vectghost(nghost,nghost,nghost);
       
       int x_size, y_size, z_size;
       Real
@@ -130,45 +131,37 @@ int main(int argc, char* argv[]) {
             pop_list.push_back(tmp);
          }
       }
-         
-      constexpr IntVect
-         btype_n(1,1,1),
-         btype_fx(1,0,0),
-         btype_fy(0,1,0),
-         btype_fz(0,0,1),
-         btype_ex(0,1,1),
-         btype_ey(1,0,1),
-         btype_ez(1,1,0);
       
       Box box_c(IntVect{0,0,0}, IntVect{x_size-1, y_size-1, z_size-1}); // cell-centred
       
-      BoxArray ba_c(box_c);
-      // cell-centred, others generated via conversion as needed
-      
+      BoxArray
+         ba_c(box_c), // cell-centred, others generated via conversion as needed
+         ba_n = convert(ba_c,AMReXConst::btype_n),
+         ba_fx = convert(ba_c,AMReXConst::btype_fx),
+         ba_fy = convert(ba_c,AMReXConst::btype_fy),
+         ba_fz = convert(ba_c,AMReXConst::btype_fz),
+         ba_ex = convert(ba_c,AMReXConst::btype_ex),
+         ba_ey = convert(ba_c,AMReXConst::btype_ey),
+         ba_ez = convert(ba_c,AMReXConst::btype_ez);
+                                                        
       DistributionMapping dm(ba_c);
       
       MultiFab
          Jp_c(ba_c, dm, 3, nghost),
-         // Jp_fx(convert(ba_c,btype_fx), dm, 1, nghost),
-         // Jp_fy(convert(ba_c,btype_fy), dm, 1, nghost),
-         // Jp_fz(convert(ba_c,btype_fz), dm, 1, nghost),
-         // B_fx(convert(ba_c,btype_fx), dm, 1, nghost),
-         // B_fy(convert(ba_c,btype_fy), dm, 1, nghost),
-         // B_fz(convert(ba_c,btype_fz), dm, 1, nghost),
-         B_n(convert(ba_c,btype_n), dm, 3, nghost),
-         E_n(convert(ba_c,btype_n), dm, 3, nghost),
+         B_n(ba_n, dm, 3, nghost),
+         E_n(ba_n, dm, 3, nghost),
          B_c(ba_c, dm, 3, nghost),
          E_c(ba_c, dm, 3, nghost);
 
       std::array<MultiFab,3> Jp_f = {
-         MultiFab(convert(ba_c,btype_fx), dm, 1, nghost),
-         MultiFab(convert(ba_c,btype_fy), dm, 1, nghost),
-         MultiFab(convert(ba_c,btype_fz), dm, 1, nghost)};
+         MultiFab(ba_fx, dm, 1, nghost),
+         MultiFab(ba_fy, dm, 1, nghost),
+         MultiFab(ba_fz, dm, 1, nghost)};
 
       std::array<MultiFab,3> B_f = {
-         MultiFab(convert(ba_c,btype_fx), dm, 1, nghost),
-         MultiFab(convert(ba_c,btype_fy), dm, 1, nghost),
-         MultiFab(convert(ba_c,btype_fz), dm, 1, nghost)};
+         MultiFab(ba_fx, dm, 1, nghost),
+         MultiFab(ba_fy, dm, 1, nghost),
+         MultiFab(ba_fz, dm, 1, nghost)};
       
       Jp_c.setVal(0.0);
       B_n.setVal(0.0);
@@ -181,78 +174,99 @@ int main(int argc, char* argv[]) {
       RealBox real_box ({x_min,y_min,z_min}, {x_max,y_max,z_max});
       
       Geometry geom;
-      geom.define(box_c, real_box, amrex::CoordSys::cartesian, periodicity);
+      geom.define(box_c, real_box, CoordSys::cartesian, periodicity);
       
       GpuArray<Real,3> dx = geom.CellSizeArray();
-
+      
       for (MFIter mfi(E_n); mfi.isValid(); ++mfi) {
-         const Box& bx = mfi.validbox();
-         const Array4<Real>& En_array = E_n.array(mfi);
+         const Box&
+            bx_n = mfi.tilebox(AMReXConst::btype_n),
+            bx_fx = mfi.tilebox(AMReXConst::btype_fx),
+            bx_fy = mfi.tilebox(AMReXConst::btype_fy),
+            bx_fz = mfi.tilebox(AMReXConst::btype_fz);
+         const Array4<Real>&
+            En_array = E_n.array(mfi),
+            Bf_array_x = B_f[0].array(mfi),
+            Bf_array_y = B_f[1].array(mfi),
+            Bf_array_z = B_f[2].array(mfi);
          
-         ParallelFor(bx, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
+         ParallelFor(bx_n, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
             Real
-               x = ii*dx[0]/(x_max - x_min),
-               y = jj*dx[1]/(y_max - y_min),
-               z = kk*dx[2]/(z_max - z_min);
-            En_array(ii,jj,kk,0) = 0.0;
-            En_array(ii,jj,kk,1) = 0.0;
-            En_array(ii,jj,kk,2) = 0.0;
-            // En_array(ii,jj,kk,0) = 10*y;
-            // En_array(ii,jj,kk,1) = std::sin(x);//*std::sin(y)*std::sin(z);
-            // En_array(ii,jj,kk,2) = std::cos(x);//*std::cos(y)*std::cos(z);
+               x = ii*dx[0] + x_min,
+               y = jj*dx[1] + y_min,
+               z = kk*dx[2] + z_min;
+            // En_array(ii,jj,kk,0) = 0.0;
+            // En_array(ii,jj,kk,1) = 0.0;
+            // En_array(ii,jj,kk,2) = 0.0;
+            // En_array(ii,jj,kk,0) = jj;
+            // En_array(ii,jj,kk,1) = 0.0;
+            // En_array(ii,jj,kk,2) = 0.0;
+            En_array(ii,jj,kk,1) = std::sin(x);//*std::sin(y)*std::sin(z);
+            En_array(ii,jj,kk,2) = std::cos(x);//*std::cos(y)*std::cos(z);
          });
-      }
-
-      for (MFIter mfi(B_f[0]); mfi.isValid(); ++mfi) {
-         const Box& bx = mfi.validbox();
-         const Array4<Real>& Bf_array_x = B_f[0].array(mfi);
          
-         ParallelFor(bx, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
+         ParallelFor(bx_fx, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
             Real
-               x = (ii+0.5)*dx[0]/(x_max - x_min),
-               y = jj*dx[1]/(y_max - y_min),
-               z = kk*dx[2]/(z_max - z_min);
-            Bf_array_x(ii,jj,kk) = 0.0;
+               x = ii*dx[0] + x_min,
+               y = (jj+0.5)*dx[1] + y_min,
+               z = (kk+0.5)*dx[2] + z_min;
+            // Bf_array_x(ii,jj,kk) = 0.0;
          });
-      }
 
-      for (MFIter mfi(B_f[1]); mfi.isValid(); ++mfi) {
-         const Box& bx = mfi.validbox();
-         const Array4<Real>& Bf_array_y = B_f[1].array(mfi);
-         
-         ParallelFor(bx, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
+         ParallelFor(bx_fy, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
             Real
-               x = ii*dx[0]/(x_max - x_min),
-               y = (jj+0.5)*dx[1]/(y_max - y_min),
-               z = kk*dx[2]/(z_max - z_min);
-            Bf_array_y(ii,jj,kk) = 0.0;
+               x = (ii+0.5)*dx[0] + x_min,
+               y = jj*dx[1] + y_min,
+               z = (kk+0.5)*dx[2] + z_min;
+            // Bf_array_y(ii,jj,kk) = 0.0;
+         });
+
+         ParallelFor(bx_fz, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
+            Real
+               x = (ii+0.5)*dx[0] + x_min,
+               y = (jj+0.5)*dx[1] + y_min,
+               z = kk*dx[2] + z_min;
+            // Bf_array_z(ii,jj,kk) = ii;
          });
       }
       
-      for (MFIter mfi(B_f[2]); mfi.isValid(); ++mfi) {
-         const Box& bx = mfi.validbox();
-         const Array4<Real>& Bf_array_z = B_f[2].array(mfi);
-         
-         ParallelFor(bx, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
-            Real
-               x = ii*dx[0]/(x_max - x_min),
-               y = jj*dx[1]/(y_max - y_min),
-               z = (kk+0.5)*dx[2]/(z_max - z_min);
-            Bf_array_z(ii,jj,kk) = 3*x;
-         });
+      // Fix non cell-centred data periodicity so that last valid point
+      // is equal to first along each dimension that is both periodic and not cell-centred
+      // i.e. face data is modified only along the face dimension
+      //         (x-face data only modifies in x-dimension),
+      //      edge data is modified only along non-edge dimensions
+      //         (x-directed edge data modifies in y- and z-dimensions),
+      //      node data is modified along all dimensions,
+      //      cell-centred data is not modified at all.
+      // Provided that the respective dimension is also periodic
+      //
+      // (FillBoundary does not do this, as only invalid (ghost) data is modified
+      // and the far ends are not identified as invalid)
+      //
+      // N.B. Theoretically this should only be necessary to run at initialisation of each field variable
+      // At future times this should hold during evolution
+      // If this rule is violated at any future time then this indicates a bug in the code
+      //
+      // !!! WARNING: Current implementation assumes only one box for entire domain!!!
+      if (geom.periodicity().isAnyPeriodic()) {
+         node_period(E_n, geom.periodicity());
+         for (int nn=0; nn<3; ++nn) {
+            node_period(B_f[nn], geom.periodicity());
+         }
       }
-      
+
+      // Complete boundary conditions
       E_n.FillBoundary(geom.periodicity());
       for (int nn=0; nn<3; ++nn) {
          B_f[nn].FillBoundary(geom.periodicity());
       }
-
-      IntVect sym_dir(0,1,1);
-
-      Print() << "E_n: " << sym_test(E_n,sym_dir) << std::endl
-              << "B_fx: " << sym_test(B_f[0],sym_dir) << std::endl
-              << "B_fy: " << sym_test(B_f[1],sym_dir) << std::endl
-              << "B_fz: " << sym_test(B_f[2],sym_dir) << std::endl;
+      
+      // const IntVect& sym_dir = AMReXConst::btype_ex;
+      
+      // Print() << "E_n: " << sym_test(E_n,sym_dir) << std::endl
+      //         << "B_fx: " << sym_test(B_f[0],sym_dir) << std::endl
+      //         << "B_fy: " << sym_test(B_f[1],sym_dir) << std::endl
+      //         << "B_fz: " << sym_test(B_f[2],sym_dir) << std::endl;
       
       Real time = 0.0;
       
@@ -282,14 +296,19 @@ int main(int argc, char* argv[]) {
             E_e[nn].FillBoundary(geom.periodicity());
          }
          std::array<MultiFab,3> curlE_f = curl_e2f(E_e, dx);
+         
+         curlB_n.FillBoundary(geom.periodicity());
+         for (int nn=0; nn<3; ++nn) {
+            curlE_f[nn].FillBoundary(geom.periodicity());
+         }
 
-         Print() << "curlB_n: " << sym_test(curlB_n,sym_dir) << std::endl
-                 << "E_ex: " << sym_test(E_e[0],sym_dir) << std::endl
-                 << "E_ey: " << sym_test(E_e[1],sym_dir) << std::endl
-                 << "E_ez: " << sym_test(E_e[2],sym_dir) << std::endl
-                 << "curlE_fx: " << sym_test(curlE_f[0],sym_dir) << std::endl
-                 << "curlE_fy: " << sym_test(curlE_f[1],sym_dir) << std::endl
-                 << "curlE_fz: " << sym_test(curlE_f[2],sym_dir) << std::endl;
+         // Print() << "curlB_n: " << sym_test(curlB_n,sym_dir) << std::endl
+         //         << "E_ex: " << sym_test(E_e[0],sym_dir) << std::endl
+         //         << "E_ey: " << sym_test(E_e[1],sym_dir) << std::endl
+         //         << "E_ez: " << sym_test(E_e[2],sym_dir) << std::endl
+         //         << "curlE_fx: " << sym_test(curlE_f[0],sym_dir) << std::endl
+         //         << "curlE_fy: " << sym_test(curlE_f[1],sym_dir) << std::endl
+         //         << "curlE_fz: " << sym_test(curlE_f[2],sym_dir) << std::endl;
          
          // Print() << "Step: " << step << std::endl
          //         << "B_f:" << std::endl
@@ -304,48 +323,36 @@ int main(int argc, char* argv[]) {
          //         << curlE_f[0].sum() + curlE_f[1].sum() + curlE_f[2].sum() << std::endl << std::endl;
          
          for (MFIter mfi(E_n); mfi.isValid(); ++mfi) {
-            const Box& bx = mfi.validbox();
+            const Box&
+               bx_n = mfi.tilebox(),
+               bx_fx = mfi.tilebox(AMReXConst::btype_fx),
+               bx_fy = mfi.tilebox(AMReXConst::btype_fy),
+               bx_fz = mfi.tilebox(AMReXConst::btype_fz);
             const Array4<Real>&
                En_array = E_n.array(mfi),
-               Bnc_array = curlB_n.array(mfi);
-
+               Bnc_array = curlB_n.array(mfi),
+               Bf_array_x = B_f[0].array(mfi),
+               Bf_array_y = B_f[1].array(mfi),
+               Bf_array_z = B_f[2].array(mfi),
+               Efc_array_x = curlE_f[0].array(mfi),
+               Efc_array_y = curlE_f[1].array(mfi),
+               Efc_array_z = curlE_f[2].array(mfi);
+            
             // Print() << "curl B_n: " << std::endl;
-            ParallelFor(bx, 3, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk, int nn) {
+            ParallelFor(bx_n, 3, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk, int nn) {
                // Print() << ii << "," << jj << "," << kk << "," << nn << ": " << Bnc_array(ii,jj,kk,nn) << std::endl;
                En_array(ii,jj,kk,nn) += dt*Bnc_array(ii,jj,kk,nn)*(PhysConst::c*PhysConst::c);
             });
-
-         }
-
-         for (MFIter mfi(B_f[0]); mfi.isValid(); ++mfi) {
-            const Box& bx = mfi.validbox();
-            const Array4<Real>&
-               Bf_array_x = B_f[0].array(mfi),
-               Efc_array_x = curlE_f[0].array(mfi);
-            
-            ParallelFor(bx, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
+               
+            ParallelFor(bx_fx, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
                Bf_array_x(ii,jj,kk) -= dt*Efc_array_x(ii,jj,kk);
             });
-         }
-
-         for (MFIter mfi(B_f[1]); mfi.isValid(); ++mfi) {
-            const Box& bx = mfi.validbox();
-            const Array4<Real>&
-               Bf_array_y = B_f[1].array(mfi),
-               Efc_array_y = curlE_f[1].array(mfi);
             
-            ParallelFor(bx, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
+            ParallelFor(bx_fy, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
                Bf_array_y(ii,jj,kk) -= dt*Efc_array_y(ii,jj,kk);
             });
-         }
-
-         for (MFIter mfi(B_f[2]); mfi.isValid(); ++mfi) {
-            const Box& bx = mfi.validbox();
-            const Array4<Real>&
-               Bf_array_z = B_f[2].array(mfi),
-               Efc_array_z = curlE_f[2].array(mfi);
             
-            ParallelFor(bx, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
+            ParallelFor(bx_fz, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
                Bf_array_z(ii,jj,kk) -= dt*Efc_array_z(ii,jj,kk);
             });
          }
@@ -355,10 +362,10 @@ int main(int argc, char* argv[]) {
             B_f[nn].FillBoundary(geom.periodicity());
          }
 
-      Print() << "E_n: " << sym_test(E_n,sym_dir) << std::endl
-              << "B_fx: " << sym_test(B_f[0],sym_dir) << std::endl
-              << "B_fy: " << sym_test(B_f[1],sym_dir) << std::endl
-              << "B_fz: " << sym_test(B_f[2],sym_dir) << std::endl;
+      // Print() << "E_n: " << sym_test(E_n,sym_dir) << std::endl
+      //         << "B_fx: " << sym_test(B_f[0],sym_dir) << std::endl
+      //         << "B_fy: " << sym_test(B_f[1],sym_dir) << std::endl
+      //         << "B_fz: " << sym_test(B_f[2],sym_dir) << std::endl;
          
          time += dt;
       }
