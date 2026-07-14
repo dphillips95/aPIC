@@ -5,10 +5,11 @@
 
 #include <operators.h>
 #include <constants.h>
+#include <math.h>
 
 using namespace amrex;
 
-// Interpolators: Node to Cell
+// Interpolators: Node to Cell - Value in cell centre is calculated as average of value at all 8 nodes
 MultiFab node2cell(const MultiFab& node_data) {
 
    int nvar = node_data.nComp();
@@ -19,10 +20,10 @@ MultiFab node2cell(const MultiFab& node_data) {
    
    for (MFIter mfi(cell_data); mfi.isValid(); ++mfi) {
       const Box& bx_c = mfi.validbox();
-      const Array4<const Real>& n_array = node_data.array(mfi);
+      const Array4<const Real>& n_array = node_data.const_array(mfi);
       const Array4<Real>& c_array = cell_data.array(mfi);
 
-      ParallelFor(bx_c, nvar, [=] AMREX_GPU_DEVICE (int ii, int jj, int kk, int nn) {
+      ParallelFor(bx_c, nvar, [&](int ii, int jj, int kk, int nn) {
          c_array(ii,jj,kk,nn) += n_array(ii,jj,kk,nn);
          c_array(ii,jj,kk,nn) += n_array(ii,jj,kk+1,nn);
          c_array(ii,jj,kk,nn) += n_array(ii,jj+1,kk,nn);
@@ -38,6 +39,7 @@ MultiFab node2cell(const MultiFab& node_data) {
    return cell_data;
 }
 
+// Interpolators: Face to Cell - Each face stores single component of vector perpendicular to face; cell centre data is calculated as average in each component of the two faces of the cell containing the given component
 MultiFab face2cell(const std::array<MultiFab,3>& face_data) {
 
    MultiFab cell_data(convert(face_data[0].boxArray(),AMReXConst::btype_c),face_data[0].distributionMap,3,face_data[0].n_grow);
@@ -47,12 +49,12 @@ MultiFab face2cell(const std::array<MultiFab,3>& face_data) {
    for (MFIter mfi(cell_data); mfi.isValid(); ++mfi) {
       const Box& bx_c = mfi.validbox();
       const Array4<const Real>&
-         f_array_x = face_data[0].array(mfi),
-         f_array_y = face_data[1].array(mfi),
-         f_array_z = face_data[2].array(mfi);
+         f_array_x = face_data[0].const_array(mfi),
+         f_array_y = face_data[1].const_array(mfi),
+         f_array_z = face_data[2].const_array(mfi);
       const Array4<Real>& c_array = cell_data.array(mfi);
 
-      ParallelFor(bx_c, [=] AMREX_GPU_DEVICE (int ii, int jj, int kk) {
+      ParallelFor(bx_c, [&](int ii, int jj, int kk) {
          c_array(ii,jj,kk,0) += (f_array_x(ii,jj,kk) + f_array_x(ii+1,jj,kk))/2;
          c_array(ii,jj,kk,1) += (f_array_y(ii,jj,kk) + f_array_y(ii,jj+1,kk))/2;
          c_array(ii,jj,kk,2) += (f_array_z(ii,jj,kk) + f_array_z(ii,jj,kk+1))/2;
@@ -62,7 +64,7 @@ MultiFab face2cell(const std::array<MultiFab,3>& face_data) {
    return cell_data;
 }
 
-// Interpolators: Node to Edge
+// Interpolators: Node to Edge - Edge data stores single component of vector data parallel to edge; edge data is calculated as average of given component from nodes at either end of edge
 std::array<MultiFab,3> node2edge(const MultiFab& node_data) {
 
    std::array<MultiFab,3> edge_data = {
@@ -80,21 +82,21 @@ std::array<MultiFab,3> node2edge(const MultiFab& node_data) {
          bx_ex = mfi.tilebox(AMReXConst::btype_ex),
          bx_ey = mfi.tilebox(AMReXConst::btype_ey),
          bx_ez = mfi.tilebox(AMReXConst::btype_ez);
-      const Array4<const Real>& n_array = node_data.array(mfi);
+      const Array4<const Real>& n_array = node_data.const_array(mfi);
       const Array4<Real>&
          e_array_x = edge_data[0].array(mfi),
          e_array_y = edge_data[1].array(mfi),
          e_array_z = edge_data[2].array(mfi);
       
-      ParallelFor(bx_ex, [=] AMREX_GPU_DEVICE (int ii, int jj, int kk) {
+      ParallelFor(bx_ex, [&](int ii, int jj, int kk) {
          e_array_x(ii,jj,kk) += (n_array(ii,jj,kk,0) + n_array(ii+1,jj,kk,0))/2;
       });
       
-      ParallelFor(bx_ey, [=] AMREX_GPU_DEVICE (int ii, int jj, int kk) {
+      ParallelFor(bx_ey, [&](int ii, int jj, int kk) {
          e_array_y(ii,jj,kk) += (n_array(ii,jj,kk,1) + n_array(ii,jj+1,kk,1))/2;
       });
       
-      ParallelFor(bx_ez, [=] AMREX_GPU_DEVICE (int ii, int jj, int kk) {
+      ParallelFor(bx_ez, [&](int ii, int jj, int kk) {
          e_array_z(ii,jj,kk) += (n_array(ii,jj,kk,2) + n_array(ii,jj,kk+1,2))/2;
       });
    }
@@ -102,7 +104,32 @@ std::array<MultiFab,3> node2edge(const MultiFab& node_data) {
    return edge_data;
 }
 
-// Boundaries: Fix Nodal Periodicity
+// Diagnostics: Compute cell energy
+MultiFab compute_energy(const MultiFab& B_c, const MultiFab& E_c) {
+
+   MultiFab Energy_c = MultiFab(B_c.boxArray(),B_c.distributionMap, 1, B_c.n_grow);
+   Energy_c.setVal(0.0);
+   
+   for(MFIter mfi(B_c); mfi.isValid(); ++mfi) {
+      const Box& bx_c = mfi.fabbox();
+      const Array4<const Real>&
+         Bc_array = B_c.const_array(mfi),
+         Ec_array = E_c.const_array(mfi);
+      const Array4<Real>& Energy_c_array = Energy_c.array(mfi);
+      
+      ParallelFor(bx_c, [&](int ii, int jj, int kk) {
+         Real
+            B_mag = square(Bc_array(ii,jj,kk,0)) + square(Bc_array(ii,jj,kk,1)) + square(Bc_array(ii,jj,kk,2)),
+            E_mag = square(Ec_array(ii,jj,kk,0)) + square(Ec_array(ii,jj,kk,1)) + square(Ec_array(ii,jj,kk,2));
+         
+         Energy_c_array(ii,jj,kk) += (B_mag/PhysConst::mu0 + E_mag*PhysConst::eps0)/2;
+      });
+   }
+
+   return Energy_c;
+}
+
+// Boundaries: Fix Nodal Periodicity - Fixes nodal data (i.e. face, edge or node data) for periodic BCs so that final 'valid' node is equal to first 'valid' node
 void node_period(MultiFab& mf, const Periodicity& period) {
 
    int nvar = mf.nComp();
@@ -152,8 +179,8 @@ void node_period(MultiFab& mf, const Periodicity& period) {
    }
 }
 
-// Curl operators: Edge to Face
-std::array<MultiFab,3> curl_e2f(const std::array<MultiFab,3>& edge_data, GpuArray<Real,3>& dx) {
+// Curl operators: Edge to Face - Curl is calculated at face centres using edges surrounding face
+std::array<MultiFab,3> curl_e2f(const std::array<MultiFab,3>& edge_data, const GpuArray<Real,3>& dx) {
 
    std::array<MultiFab,3> face_curl = {
       MultiFab(convert(edge_data[0].boxArray(),AMReXConst::btype_fx),edge_data[0].distributionMap, 1, edge_data[0].n_grow),
@@ -171,25 +198,25 @@ std::array<MultiFab,3> curl_e2f(const std::array<MultiFab,3>& edge_data, GpuArra
          bx_fy = mfi.tilebox(AMReXConst::btype_fy),
          bx_fz = mfi.tilebox(AMReXConst::btype_fz);
       const Array4<const Real>&
-         e_array_x = edge_data[0].array(mfi),
-         e_array_y = edge_data[1].array(mfi),
-         e_array_z = edge_data[2].array(mfi);
+         e_array_x = edge_data[0].const_array(mfi),
+         e_array_y = edge_data[1].const_array(mfi),
+         e_array_z = edge_data[2].const_array(mfi);
       const Array4<Real>&
          fc_array_x = face_curl[0].array(mfi),
          fc_array_y = face_curl[1].array(mfi),
          fc_array_z = face_curl[2].array(mfi);
       
-      ParallelFor(bx_fx, [=] AMREX_GPU_DEVICE (int ii, int jj, int kk) {
+      ParallelFor(bx_fx, [&](int ii, int jj, int kk) {
          fc_array_x(ii,jj,kk) += (e_array_z(ii,jj+1,kk) - e_array_z(ii,jj,kk))/dx[1];
          fc_array_x(ii,jj,kk) -= (e_array_y(ii,jj,kk+1) - e_array_y(ii,jj,kk))/dx[2];
       });
       
-      ParallelFor(bx_fy, [=] AMREX_GPU_DEVICE (int ii, int jj, int kk) {
+      ParallelFor(bx_fy, [&](int ii, int jj, int kk) {
          fc_array_y(ii,jj,kk) += (e_array_x(ii,jj,kk+1) - e_array_x(ii,jj,kk))/dx[2];
          fc_array_y(ii,jj,kk) -= (e_array_z(ii+1,jj,kk) - e_array_z(ii,jj,kk))/dx[0];
       });
       
-      ParallelFor(bx_fz, [=] AMREX_GPU_DEVICE (int ii, int jj, int kk) {
+      ParallelFor(bx_fz, [&](int ii, int jj, int kk) {
          fc_array_z(ii,jj,kk) += (e_array_y(ii+1,jj,kk) - e_array_y(ii,jj,kk))/dx[0];
          fc_array_z(ii,jj,kk) -= (e_array_x(ii,jj+1,kk) - e_array_x(ii,jj,kk))/dx[1];
       });
@@ -198,8 +225,8 @@ std::array<MultiFab,3> curl_e2f(const std::array<MultiFab,3>& edge_data, GpuArra
    return face_curl;
 }
 
-// Curl operators: Face to Node
-MultiFab curl_f2n(const std::array<MultiFab,3>& face_data, GpuArray<Real,3>& dx) {
+// Curl operators: Face to Node - Curl is calculated at nodes component-wise using faces adjacent each edge connecting to node
+MultiFab curl_f2n(const std::array<MultiFab,3>& face_data, const GpuArray<Real,3>& dx) {
 
    MultiFab node_curl(convert(face_data[0].boxArray(),AMReXConst::btype_n),face_data[0].distributionMap, 3, face_data[0].n_grow);
    
@@ -208,12 +235,12 @@ MultiFab curl_f2n(const std::array<MultiFab,3>& face_data, GpuArray<Real,3>& dx)
    for (MFIter mfi(node_curl); mfi.isValid(); ++mfi) {
       const Box& bx_n = mfi.validbox();
       const Array4<const Real>&
-         f_array_x = face_data[0].array(mfi),
-         f_array_y = face_data[1].array(mfi),
-         f_array_z = face_data[2].array(mfi);
+         f_array_x = face_data[0].const_array(mfi),
+         f_array_y = face_data[1].const_array(mfi),
+         f_array_z = face_data[2].const_array(mfi);
       const Array4<Real>& nc_array = node_curl.array(mfi);
       
-      ParallelFor(bx_n, [=] AMREX_GPU_DEVICE (int ii, int jj, int kk) {
+      ParallelFor(bx_n, [&](int ii, int jj, int kk) {
          nc_array(ii,jj,kk,0) += (f_array_z(ii-1,jj,kk) - f_array_z(ii-1,jj-1,kk))/(2*dx[1]);
          nc_array(ii,jj,kk,0) += (f_array_z(ii,jj,kk) - f_array_z(ii,jj-1,kk))/(2*dx[1]);
          nc_array(ii,jj,kk,0) -= (f_array_y(ii-1,jj,kk) - f_array_y(ii-1,jj,kk-1))/(2*dx[2]);
@@ -234,7 +261,11 @@ MultiFab curl_f2n(const std::array<MultiFab,3>& face_data, GpuArray<Real,3>& dx)
    return node_curl;
 }
 
-// Test: Symmetry
+// Test: Symmetry - Checks multifab data is symmetric in given direction(s); symmetry direction(s) are given by '1' in 3D 'dir' vector.
+// If all values of dir are 1 then tests if all values in multifab are constant
+// If two values of dir are 1 then tests if data is 1D data, non-constant in only the remaining dimension
+// If one value of dir is 1 then tests if data is 2D data, constant only in the given symmetry direction
+// If no values of dir are 1 then test is skipped as no symmetry is being tested
 bool sym_test(const MultiFab& mf, const IntVect& dir) {
 
    bool test = true;
@@ -243,7 +274,7 @@ bool sym_test(const MultiFab& mf, const IntVect& dir) {
    
    for (MFIter mfi(mf); mfi.isValid(); ++mfi) {
       const Box& bx = mfi.validbox();
-      const Array4<const Real>& dat = mf.array(mfi);
+      const Array4<const Real>& dat = mf.const_array(mfi);
       const Dim3&
          int_min = lbound(bx),
          int_max = ubound(bx);

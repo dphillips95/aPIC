@@ -151,7 +151,8 @@ int main(int argc, char* argv[]) {
          B_n(ba_n, dm, 3, nghost),
          E_n(ba_n, dm, 3, nghost),
          B_c(ba_c, dm, 3, nghost),
-         E_c(ba_c, dm, 3, nghost);
+         E_c(ba_c, dm, 3, nghost),
+         Energy_c(ba_c, dm, 1, nghost);
 
       std::array<MultiFab,3> Jp_f = {
          MultiFab(ba_fx, dm, 1, nghost),
@@ -170,6 +171,7 @@ int main(int argc, char* argv[]) {
          Jp_f[nn].setVal(0.0);
          B_f[nn].setVal(0.0);
       }
+      Energy_c.setVal(0.0);
       
       RealBox real_box ({x_min,y_min,z_min}, {x_max,y_max,z_max});
       
@@ -190,7 +192,7 @@ int main(int argc, char* argv[]) {
             Bf_array_y = B_f[1].array(mfi),
             Bf_array_z = B_f[2].array(mfi);
          
-         ParallelFor(bx_n, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
+         ParallelFor(bx_n, [&](int ii, int jj, int kk) {
             Real
                x = ii*dx[0] + x_min,
                y = jj*dx[1] + y_min,
@@ -201,11 +203,11 @@ int main(int argc, char* argv[]) {
             // En_array(ii,jj,kk,0) = jj;
             // En_array(ii,jj,kk,1) = 0.0;
             // En_array(ii,jj,kk,2) = 0.0;
-            En_array(ii,jj,kk,1) = std::sin(x);//*std::sin(y)*std::sin(z);
-            En_array(ii,jj,kk,2) = std::cos(x);//*std::cos(y)*std::cos(z);
+            En_array(ii,jj,kk,1) = std::sin(2*M_PI*x/(x_max - x_min));//*std::sin(y)*std::sin(z);
+            En_array(ii,jj,kk,2) = std::cos(2*M_PI*x/(x_max - x_min));//*std::cos(y)*std::cos(z);
          });
          
-         ParallelFor(bx_fx, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
+         ParallelFor(bx_fx, [&](int ii, int jj, int kk) {
             Real
                x = ii*dx[0] + x_min,
                y = (jj+0.5)*dx[1] + y_min,
@@ -213,7 +215,7 @@ int main(int argc, char* argv[]) {
             // Bf_array_x(ii,jj,kk) = 0.0;
          });
 
-         ParallelFor(bx_fy, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
+         ParallelFor(bx_fy, [&](int ii, int jj, int kk) {
             Real
                x = (ii+0.5)*dx[0] + x_min,
                y = jj*dx[1] + y_min,
@@ -221,7 +223,7 @@ int main(int argc, char* argv[]) {
             // Bf_array_y(ii,jj,kk) = 0.0;
          });
 
-         ParallelFor(bx_fz, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
+         ParallelFor(bx_fz, [&](int ii, int jj, int kk) {
             Real
                x = (ii+0.5)*dx[0] + x_min,
                y = (jj+0.5)*dx[1] + y_min,
@@ -276,18 +278,21 @@ int main(int argc, char* argv[]) {
          if (step % save_steps == 0) {
             const std::string& pltfile = amrex::Concatenate("plt", step, 5);
             
-            MultiFab plt_Fab(ba_c, dm, 6, nghost);
+            MultiFab plt_Fab(ba_c, dm, 7, nghost);
 
             B_c = face2cell(B_f);
             E_c = node2cell(E_n);
 
             B_c.FillBoundary(geom.periodicity());
             E_c.FillBoundary(geom.periodicity());
+
+            Energy_c = compute_energy(B_c,E_c);
             
             MultiFab::Copy(plt_Fab, B_c, 0, 0, 3, nghost);
-            MultiFab::Copy(plt_Fab, E_c, 0, 3, 3, nghost);               
+            MultiFab::Copy(plt_Fab, E_c, 0, 3, 3, nghost);
+            MultiFab::Copy(plt_Fab, Energy_c, 0, 6, 1, nghost);
             
-            WriteSingleLevelPlotfile(pltfile, plt_Fab, {"Bx","By","Bz","Ex","Ey","Ez"}, geom, time, step);
+            WriteSingleLevelPlotfile(pltfile, plt_Fab, {"Bx","By","Bz","Ex","Ey","Ez","EM_Energy"}, geom, time, step);
          }
          
          MultiFab curlB_n = curl_f2n(B_f, dx);
@@ -328,31 +333,32 @@ int main(int argc, char* argv[]) {
                bx_fx = mfi.tilebox(AMReXConst::btype_fx),
                bx_fy = mfi.tilebox(AMReXConst::btype_fy),
                bx_fz = mfi.tilebox(AMReXConst::btype_fz);
+            const Array4<const Real>&
+               Bnc_array = curlB_n.const_array(mfi),
+               Efc_array_x = curlE_f[0].const_array(mfi),
+               Efc_array_y = curlE_f[1].const_array(mfi),
+               Efc_array_z = curlE_f[2].const_array(mfi);
             const Array4<Real>&
                En_array = E_n.array(mfi),
-               Bnc_array = curlB_n.array(mfi),
                Bf_array_x = B_f[0].array(mfi),
                Bf_array_y = B_f[1].array(mfi),
-               Bf_array_z = B_f[2].array(mfi),
-               Efc_array_x = curlE_f[0].array(mfi),
-               Efc_array_y = curlE_f[1].array(mfi),
-               Efc_array_z = curlE_f[2].array(mfi);
+               Bf_array_z = B_f[2].array(mfi);
             
             // Print() << "curl B_n: " << std::endl;
-            ParallelFor(bx_n, 3, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk, int nn) {
+            ParallelFor(bx_n, 3, [&](int ii, int jj, int kk, int nn) {
                // Print() << ii << "," << jj << "," << kk << "," << nn << ": " << Bnc_array(ii,jj,kk,nn) << std::endl;
                En_array(ii,jj,kk,nn) += dt*Bnc_array(ii,jj,kk,nn)*(PhysConst::c*PhysConst::c);
             });
                
-            ParallelFor(bx_fx, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
+            ParallelFor(bx_fx, [&](int ii, int jj, int kk) {
                Bf_array_x(ii,jj,kk) -= dt*Efc_array_x(ii,jj,kk);
             });
             
-            ParallelFor(bx_fy, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
+            ParallelFor(bx_fy, [&](int ii, int jj, int kk) {
                Bf_array_y(ii,jj,kk) -= dt*Efc_array_y(ii,jj,kk);
             });
             
-            ParallelFor(bx_fz, [=] AMREX_GPU_DEVICE(int ii, int jj, int kk) {
+            ParallelFor(bx_fz, [&](int ii, int jj, int kk) {
                Bf_array_z(ii,jj,kk) -= dt*Efc_array_z(ii,jj,kk);
             });
          }
@@ -371,18 +377,21 @@ int main(int argc, char* argv[]) {
       }
       const std::string& pltfile = amrex::Concatenate("plt", steps, 5);
       
-      MultiFab plt_Fab(ba_c, dm, 6, nghost);
+      MultiFab plt_Fab(ba_c, dm, 7, nghost);
       
       B_c = face2cell(B_f);
       E_c = node2cell(E_n);
 
       B_c.FillBoundary(geom.periodicity());
       E_c.FillBoundary(geom.periodicity());
+
+      Energy_c = compute_energy(B_c,E_c);
       
       MultiFab::Copy(plt_Fab, B_c, 0, 0, 3, nghost);
       MultiFab::Copy(plt_Fab, E_c, 0, 3, 3, nghost);
+      MultiFab::Copy(plt_Fab, Energy_c, 0, 6, 1, nghost);
       
-      WriteSingleLevelPlotfile(pltfile, plt_Fab, {"Bx","By","Bz","Ex","Ey","Ez"}, geom, time, steps);
+      WriteSingleLevelPlotfile(pltfile, plt_Fab, {"Bx","By","Bz","Ex","Ey","Ez","EM_Energy"}, geom, time, steps);
    }
    Finalize();
 }
