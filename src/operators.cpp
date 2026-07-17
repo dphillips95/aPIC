@@ -10,11 +10,16 @@
 using namespace amrex;
 
 // Interpolators: Node to Cell - Value in cell centre is calculated as average of value at all 8 nodes
-MultiFab node2cell(const MultiFab& node_data) {
-
+MultiFab node2cell(const MultiFab& node_data, int nghost) {
+   // If number of ghost cells is not given (thus set to -1), copy from input MultiFab
+   IntVect vect_nghost(nghost,nghost,nghost);
+   if (nghost == -1) {
+      vect_nghost = node_data.n_grow;
+   }
+   
    int nvar = node_data.nComp();
    
-   MultiFab cell_data(convert(node_data.boxArray(),AMReXConst::btype_c),node_data.distributionMap,nvar,node_data.n_grow);
+   MultiFab cell_data(convert(node_data.boxArray(),AMReXConst::btype_c),node_data.distributionMap,nvar,vect_nghost);
 
    cell_data.setVal(0.0);
    
@@ -24,13 +29,13 @@ MultiFab node2cell(const MultiFab& node_data) {
       const Array4<Real>& c_array = cell_data.array(mfi);
 
       ParallelFor(bx_c, nvar, [&](int ii, int jj, int kk, int nn) {
-         c_array(ii,jj,kk,nn) += n_array(ii,jj,kk,nn);
-         c_array(ii,jj,kk,nn) += n_array(ii,jj,kk+1,nn);
-         c_array(ii,jj,kk,nn) += n_array(ii,jj+1,kk,nn);
-         c_array(ii,jj,kk,nn) += n_array(ii,jj+1,kk+1,nn);
-         c_array(ii,jj,kk,nn) += n_array(ii+1,jj,kk,nn);
-         c_array(ii,jj,kk,nn) += n_array(ii+1,jj,kk+1,nn);
-         c_array(ii,jj,kk,nn) += n_array(ii+1,jj+1,kk,nn);
+         c_array(ii,jj,kk,nn) += n_array(ii,  jj,  kk,  nn);
+         c_array(ii,jj,kk,nn) += n_array(ii,  jj,  kk+1,nn);
+         c_array(ii,jj,kk,nn) += n_array(ii,  jj+1,kk,  nn);
+         c_array(ii,jj,kk,nn) += n_array(ii,  jj+1,kk+1,nn);
+         c_array(ii,jj,kk,nn) += n_array(ii+1,jj,  kk,  nn);
+         c_array(ii,jj,kk,nn) += n_array(ii+1,jj,  kk+1,nn);
+         c_array(ii,jj,kk,nn) += n_array(ii+1,jj+1,kk,  nn);
          c_array(ii,jj,kk,nn) += n_array(ii+1,jj+1,kk+1,nn);
          c_array(ii,jj,kk,nn) /= 8;
       });
@@ -40,9 +45,14 @@ MultiFab node2cell(const MultiFab& node_data) {
 }
 
 // Interpolators: Face to Cell - Each face stores single component of vector perpendicular to face; cell centre data is calculated as average in each component of the two faces of the cell containing the given component
-MultiFab face2cell(const std::array<MultiFab,3>& face_data) {
-
-   MultiFab cell_data(convert(face_data[0].boxArray(),AMReXConst::btype_c),face_data[0].distributionMap,3,face_data[0].n_grow);
+MultiFab face2cell(const std::array<MultiFab,3>& face_data, int nghost) {
+   // If number of ghost cells is not given (thus set to -1), copy from input MultiFab
+   IntVect vect_nghost(nghost,nghost,nghost);
+   if (nghost == -1) {
+      vect_nghost = face_data[0].n_grow;
+   }
+   
+   MultiFab cell_data(convert(face_data[0].boxArray(),AMReXConst::btype_c),face_data[0].distributionMap,3,vect_nghost);
 
    cell_data.setVal(0.0);
 
@@ -55,9 +65,9 @@ MultiFab face2cell(const std::array<MultiFab,3>& face_data) {
       const Array4<Real>& c_array = cell_data.array(mfi);
 
       ParallelFor(bx_c, [&](int ii, int jj, int kk) {
-         c_array(ii,jj,kk,0) += (f_array_x(ii,jj,kk) + f_array_x(ii+1,jj,kk))/2;
-         c_array(ii,jj,kk,1) += (f_array_y(ii,jj,kk) + f_array_y(ii,jj+1,kk))/2;
-         c_array(ii,jj,kk,2) += (f_array_z(ii,jj,kk) + f_array_z(ii,jj,kk+1))/2;
+         c_array(ii,jj,kk,0) += (f_array_x(ii,  jj,  kk  ) + f_array_x(ii+1,jj,  kk  ))/2;
+         c_array(ii,jj,kk,1) += (f_array_y(ii,  jj,  kk  ) + f_array_y(ii,  jj+1,kk  ))/2;
+         c_array(ii,jj,kk,2) += (f_array_z(ii,  jj,  kk  ) + f_array_z(ii,  jj,  kk+1))/2;
       });
    }
 
@@ -65,12 +75,17 @@ MultiFab face2cell(const std::array<MultiFab,3>& face_data) {
 }
 
 // Interpolators: Node to Edge - Edge data stores single component of vector data parallel to edge; edge data is calculated as average of given component from nodes at either end of edge
-std::array<MultiFab,3> node2edge(const MultiFab& node_data) {
-
+std::array<MultiFab,3> node2edge(const MultiFab& node_data, int nghost) {
+   // If number of ghost cells is not given (thus set to -1), copy from input MultiFab
+   IntVect vect_nghost(nghost,nghost,nghost);
+   if (nghost == -1) {
+      vect_nghost = node_data.n_grow;
+   }
+   
    std::array<MultiFab,3> edge_data = {
-      MultiFab(convert(node_data.boxArray(),AMReXConst::btype_ex),node_data.distributionMap, 1, node_data.n_grow),
-      MultiFab(convert(node_data.boxArray(),AMReXConst::btype_ey),node_data.distributionMap, 1, node_data.n_grow),
-      MultiFab(convert(node_data.boxArray(),AMReXConst::btype_ez),node_data.distributionMap, 1, node_data.n_grow)
+      MultiFab(convert(node_data.boxArray(),AMReXConst::btype_ex),node_data.distributionMap, 1, vect_nghost),
+      MultiFab(convert(node_data.boxArray(),AMReXConst::btype_ey),node_data.distributionMap, 1, vect_nghost),
+      MultiFab(convert(node_data.boxArray(),AMReXConst::btype_ez),node_data.distributionMap, 1, vect_nghost)
    };
 
    for (int nn=0; nn<3; ++nn) {
@@ -89,15 +104,15 @@ std::array<MultiFab,3> node2edge(const MultiFab& node_data) {
          e_array_z = edge_data[2].array(mfi);
       
       ParallelFor(bx_ex, [&](int ii, int jj, int kk) {
-         e_array_x(ii,jj,kk) += (n_array(ii,jj,kk,0) + n_array(ii+1,jj,kk,0))/2;
+         e_array_x(ii,jj,kk) += (n_array(ii,  jj,  kk,  0) + n_array(ii+1,jj,  kk,  0))/2;
       });
       
       ParallelFor(bx_ey, [&](int ii, int jj, int kk) {
-         e_array_y(ii,jj,kk) += (n_array(ii,jj,kk,1) + n_array(ii,jj+1,kk,1))/2;
+         e_array_y(ii,jj,kk) += (n_array(ii,  jj,  kk,  1) + n_array(ii,  jj+1,kk,  1))/2;
       });
       
       ParallelFor(bx_ez, [&](int ii, int jj, int kk) {
-         e_array_z(ii,jj,kk) += (n_array(ii,jj,kk,2) + n_array(ii,jj,kk+1,2))/2;
+         e_array_z(ii,jj,kk) += (n_array(ii,  jj,  kk,  2) + n_array(ii,  jj,  kk+1,2))/2;
       });
    }
 
@@ -105,9 +120,14 @@ std::array<MultiFab,3> node2edge(const MultiFab& node_data) {
 }
 
 // Diagnostics: Compute cell energy
-MultiFab compute_energy(const MultiFab& B_c, const MultiFab& E_c) {
-
-   MultiFab Energy_c = MultiFab(B_c.boxArray(),B_c.distributionMap, 1, B_c.n_grow);
+MultiFab compute_energy(const MultiFab& B_c, const MultiFab& E_c, int nghost) {
+   // If number of ghost cells is not given (thus set to -1), copy from input MultiFab
+   IntVect vect_nghost(nghost,nghost,nghost);
+   if (nghost == -1) {
+      vect_nghost = B_c.n_grow;
+   }
+   
+   MultiFab Energy_c = MultiFab(B_c.boxArray(), B_c.distributionMap, 1, vect_nghost);
    Energy_c.setVal(0.0);
    
    for(MFIter mfi(B_c); mfi.isValid(); ++mfi) {
@@ -180,12 +200,17 @@ void node_period(MultiFab& mf, const Periodicity& period) {
 }
 
 // Curl operators: Edge to Face - Curl is calculated at face centres using edges surrounding face
-std::array<MultiFab,3> curl_e2f(const std::array<MultiFab,3>& edge_data, const GpuArray<Real,3>& dx) {
-
+std::array<MultiFab,3> curl_e2f(const std::array<MultiFab,3>& edge_data, const GpuArray<Real,3>& dx, int nghost) {
+   // If number of ghost cells is not given (thus set to -1), copy from input MultiFab
+   IntVect vect_nghost(nghost,nghost,nghost);
+   if (nghost == -1) {
+      vect_nghost = edge_data[0].n_grow;
+   }
+   
    std::array<MultiFab,3> face_curl = {
-      MultiFab(convert(edge_data[0].boxArray(),AMReXConst::btype_fx),edge_data[0].distributionMap, 1, edge_data[0].n_grow),
-      MultiFab(convert(edge_data[0].boxArray(),AMReXConst::btype_fy),edge_data[0].distributionMap, 1, edge_data[0].n_grow),
-      MultiFab(convert(edge_data[0].boxArray(),AMReXConst::btype_fz),edge_data[0].distributionMap, 1, edge_data[0].n_grow)
+      MultiFab(convert(edge_data[0].boxArray(),AMReXConst::btype_fx),edge_data[0].distributionMap, 1, vect_nghost),
+      MultiFab(convert(edge_data[0].boxArray(),AMReXConst::btype_fy),edge_data[0].distributionMap, 1, vect_nghost),
+      MultiFab(convert(edge_data[0].boxArray(),AMReXConst::btype_fz),edge_data[0].distributionMap, 1, vect_nghost)
    };
 
    for (int nn=0; nn<3;++nn) {
@@ -207,18 +232,75 @@ std::array<MultiFab,3> curl_e2f(const std::array<MultiFab,3>& edge_data, const G
          fc_array_z = face_curl[2].array(mfi);
       
       ParallelFor(bx_fx, [&](int ii, int jj, int kk) {
-         fc_array_x(ii,jj,kk) += (e_array_z(ii,jj+1,kk) - e_array_z(ii,jj,kk))/dx[1];
-         fc_array_x(ii,jj,kk) -= (e_array_y(ii,jj,kk+1) - e_array_y(ii,jj,kk))/dx[2];
+         fc_array_x(ii,jj,kk) += (e_array_z(ii,  jj+1,kk  ) - e_array_z(ii,  jj,  kk  ))/dx[1];
+         fc_array_x(ii,jj,kk) -= (e_array_y(ii,  jj,  kk+1) - e_array_y(ii,  jj,  kk  ))/dx[2];
       });
       
       ParallelFor(bx_fy, [&](int ii, int jj, int kk) {
-         fc_array_y(ii,jj,kk) += (e_array_x(ii,jj,kk+1) - e_array_x(ii,jj,kk))/dx[2];
-         fc_array_y(ii,jj,kk) -= (e_array_z(ii+1,jj,kk) - e_array_z(ii,jj,kk))/dx[0];
+         fc_array_y(ii,jj,kk) += (e_array_x(ii,  jj,  kk+1) - e_array_x(ii,  jj,  kk  ))/dx[2];
+         fc_array_y(ii,jj,kk) -= (e_array_z(ii+1,jj,  kk  ) - e_array_z(ii,  jj,  kk  ))/dx[0];
       });
       
       ParallelFor(bx_fz, [&](int ii, int jj, int kk) {
-         fc_array_z(ii,jj,kk) += (e_array_y(ii+1,jj,kk) - e_array_y(ii,jj,kk))/dx[0];
-         fc_array_z(ii,jj,kk) -= (e_array_x(ii,jj+1,kk) - e_array_x(ii,jj,kk))/dx[1];
+         fc_array_z(ii,jj,kk) += (e_array_y(ii+1,jj,  kk  ) - e_array_y(ii,  jj,  kk  ))/dx[0];
+         fc_array_z(ii,jj,kk) -= (e_array_x(ii,  jj+1,kk  ) - e_array_x(ii,  jj,  kk  ))/dx[1];
+      });
+   }
+   
+   return face_curl;
+}
+
+// Curl operators: Node to Face - Curl is calculated at face centres using edges surrounding face; edge values are averaged from neighbours as in node2edge
+// Edge values are skipped, i.e. computes directly from node to face curl
+// This should therefore be equivalent to curl_e2f(node2edge(MF),dx)
+std::array<MultiFab,3> curl_n2f(const MultiFab& node_data, const GpuArray<Real,3>& dx, int nghost) {
+   // If number of ghost cells is not given (thus set to -1), copy from input MultiFab
+   IntVect vect_nghost(nghost,nghost,nghost);
+   if (nghost == -1) {
+      vect_nghost = node_data.n_grow;
+   }
+   
+   std::array<MultiFab,3> face_curl = {
+      MultiFab(convert(node_data.boxArray(),AMReXConst::btype_fx),node_data.distributionMap, 1, vect_nghost),
+      MultiFab(convert(node_data.boxArray(),AMReXConst::btype_fy),node_data.distributionMap, 1, vect_nghost),
+      MultiFab(convert(node_data.boxArray(),AMReXConst::btype_fz),node_data.distributionMap, 1, vect_nghost)
+   };
+
+   for (int nn=0; nn<3;++nn) {
+      face_curl[nn].setVal(0.0);
+   }
+   
+   for (MFIter mfi(face_curl[0]); mfi.isValid(); ++mfi) {
+      const Box&
+         bx_fx = mfi.tilebox(AMReXConst::btype_fx),
+         bx_fy = mfi.tilebox(AMReXConst::btype_fy),
+         bx_fz = mfi.tilebox(AMReXConst::btype_fz);
+      const Array4<const Real>&
+         n_array = node_data.const_array(mfi);
+      const Array4<Real>&
+         fc_array_x = face_curl[0].array(mfi),
+         fc_array_y = face_curl[1].array(mfi),
+         fc_array_z = face_curl[2].array(mfi);
+      
+      ParallelFor(bx_fx, [&](int ii, int jj, int kk) {
+         fc_array_x(ii,jj,kk) += (n_array(ii,  jj+1,kk,  2) + n_array(ii,  jj+1,kk+1,2))/(2*dx[1]);
+         fc_array_x(ii,jj,kk) -= (n_array(ii,  jj,  kk,  2) + n_array(ii,  jj,  kk+1,2))/(2*dx[1]);
+         fc_array_x(ii,jj,kk) -= (n_array(ii,  jj,  kk+1,1) + n_array(ii,  jj+1,kk+1,1))/(2*dx[2]);
+         fc_array_x(ii,jj,kk) += (n_array(ii,  jj,  kk,  1) + n_array(ii,  jj+1,kk,  1))/(2*dx[2]);
+      });
+      
+      ParallelFor(bx_fy, [&](int ii, int jj, int kk) {
+         fc_array_y(ii,jj,kk) += (n_array(ii,  jj,  kk+1,0) + n_array(ii+1,jj,  kk+1,0))/(2*dx[2]);
+         fc_array_y(ii,jj,kk) -= (n_array(ii,  jj,  kk,  0) + n_array(ii+1,jj,  kk,  0))/(2*dx[2]);
+         fc_array_y(ii,jj,kk) -= (n_array(ii+1,jj,  kk,  2) + n_array(ii+1,jj,  kk+1,2))/(2*dx[0]);
+         fc_array_y(ii,jj,kk) += (n_array(ii,  jj,  kk,  2) + n_array(ii,  jj,  kk+1,2))/(2*dx[0]);
+      });
+      
+      ParallelFor(bx_fz, [&](int ii, int jj, int kk) {
+         fc_array_z(ii,jj,kk) += (n_array(ii+1,jj,  kk,  1) + n_array(ii+1,jj+1,kk,  1))/(2*dx[0]);
+         fc_array_z(ii,jj,kk) -= (n_array(ii,  jj,  kk,  1) + n_array(ii,  jj+1,kk,  1))/(2*dx[0]);
+         fc_array_z(ii,jj,kk) -= (n_array(ii,  jj+1,kk,  0) + n_array(ii+1,jj+1,kk,  0))/(2*dx[1]);
+         fc_array_z(ii,jj,kk) += (n_array(ii,  jj,  kk,  0) + n_array(ii+1,jj,  kk,  0))/(2*dx[1]);
       });
    }
    
@@ -226,35 +308,40 @@ std::array<MultiFab,3> curl_e2f(const std::array<MultiFab,3>& edge_data, const G
 }
 
 // Curl operators: Face to Node - Curl is calculated at nodes component-wise using faces adjacent each edge connecting to node
-MultiFab curl_f2n(const std::array<MultiFab,3>& face_data, const GpuArray<Real,3>& dx) {
-
-   MultiFab node_curl(convert(face_data[0].boxArray(),AMReXConst::btype_n),face_data[0].distributionMap, 3, face_data[0].n_grow);
+MultiFab curl_f2n(const MultiFab& xface_data, const MultiFab& yface_data, const MultiFab& zface_data, const GpuArray<Real,3>& dx, int nghost) {
+   // If number of ghost cells is not given (thus set to -1), copy from input MultiFab
+   IntVect vect_nghost(nghost,nghost,nghost);
+   if (nghost == -1) {
+      vect_nghost = xface_data.n_grow;
+   }
+   
+   MultiFab node_curl(convert(xface_data.boxArray(),AMReXConst::btype_n),xface_data.distributionMap, 3, vect_nghost);
    
    node_curl.setVal(0.0);
    
    for (MFIter mfi(node_curl); mfi.isValid(); ++mfi) {
       const Box& bx_n = mfi.validbox();
       const Array4<const Real>&
-         f_array_x = face_data[0].const_array(mfi),
-         f_array_y = face_data[1].const_array(mfi),
-         f_array_z = face_data[2].const_array(mfi);
+         f_array_x = xface_data.const_array(mfi),
+         f_array_y = yface_data.const_array(mfi),
+         f_array_z = zface_data.const_array(mfi);
       const Array4<Real>& nc_array = node_curl.array(mfi);
       
       ParallelFor(bx_n, [&](int ii, int jj, int kk) {
-         nc_array(ii,jj,kk,0) += (f_array_z(ii-1,jj,kk) - f_array_z(ii-1,jj-1,kk))/(2*dx[1]);
-         nc_array(ii,jj,kk,0) += (f_array_z(ii,jj,kk) - f_array_z(ii,jj-1,kk))/(2*dx[1]);
-         nc_array(ii,jj,kk,0) -= (f_array_y(ii-1,jj,kk) - f_array_y(ii-1,jj,kk-1))/(2*dx[2]);
-         nc_array(ii,jj,kk,0) -= (f_array_y(ii,jj,kk) - f_array_y(ii,jj,kk-1))/(2*dx[2]);
+         nc_array(ii,jj,kk,0) += (f_array_z(ii-1,jj,  kk  ) - f_array_z(ii-1,jj-1,kk  ))/(2*dx[1]);
+         nc_array(ii,jj,kk,0) += (f_array_z(ii,  jj,  kk  ) - f_array_z(ii,  jj-1,kk  ))/(2*dx[1]);
+         nc_array(ii,jj,kk,0) -= (f_array_y(ii-1,jj,  kk  ) - f_array_y(ii-1,jj,  kk-1))/(2*dx[2]);
+         nc_array(ii,jj,kk,0) -= (f_array_y(ii,  jj,  kk  ) - f_array_y(ii,  jj,  kk-1))/(2*dx[2]);
          
-         nc_array(ii,jj,kk,1) += (f_array_x(ii,jj-1,kk) - f_array_x(ii,jj-1,kk-1))/(2*dx[2]);
-         nc_array(ii,jj,kk,1) += (f_array_x(ii,jj,kk) - f_array_x(ii,jj,kk-1))/(2*dx[2]);
-         nc_array(ii,jj,kk,1) -= (f_array_z(ii,jj-1,kk) - f_array_z(ii-1,jj-1,kk))/(2*dx[0]);
-         nc_array(ii,jj,kk,1) -= (f_array_z(ii,jj,kk) - f_array_z(ii-1,jj,kk))/(2*dx[0]);
+         nc_array(ii,jj,kk,1) += (f_array_x(ii,  jj-1,kk  ) - f_array_x(ii,  jj-1,kk-1))/(2*dx[2]);
+         nc_array(ii,jj,kk,1) += (f_array_x(ii,  jj,  kk  ) - f_array_x(ii,  jj,  kk-1))/(2*dx[2]);
+         nc_array(ii,jj,kk,1) -= (f_array_z(ii,  jj-1,kk  ) - f_array_z(ii-1,jj-1,kk  ))/(2*dx[0]);
+         nc_array(ii,jj,kk,1) -= (f_array_z(ii,  jj,  kk  ) - f_array_z(ii-1,jj,  kk  ))/(2*dx[0]);
          
-         nc_array(ii,jj,kk,2) += (f_array_y(ii,jj,kk-1) - f_array_y(ii-1,jj,kk-1))/(2*dx[0]);
-         nc_array(ii,jj,kk,2) += (f_array_y(ii,jj,kk) - f_array_y(ii-1,jj,kk))/(2*dx[0]);
-         nc_array(ii,jj,kk,2) -= (f_array_x(ii,jj,kk-1) - f_array_x(ii,jj-1,kk-1))/(2*dx[1]);
-         nc_array(ii,jj,kk,2) -= (f_array_x(ii,jj,kk) - f_array_x(ii,jj-1,kk))/(2*dx[1]);
+         nc_array(ii,jj,kk,2) += (f_array_y(ii,  jj,  kk-1) - f_array_y(ii-1,jj,  kk-1))/(2*dx[0]);
+         nc_array(ii,jj,kk,2) += (f_array_y(ii,  jj,  kk  ) - f_array_y(ii-1,jj,  kk  ))/(2*dx[0]);
+         nc_array(ii,jj,kk,2) -= (f_array_x(ii,  jj,  kk-1) - f_array_x(ii,  jj-1,kk-1))/(2*dx[1]);
+         nc_array(ii,jj,kk,2) -= (f_array_x(ii,  jj,  kk  ) - f_array_x(ii,  jj-1,kk  ))/(2*dx[1]);
       });
    }
 

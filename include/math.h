@@ -1,6 +1,8 @@
-#include <AMReX.H>
+#ifndef MATH_H_
+#define MATH_H_
 
-auto square(){ return 0; }
+#include <cmath>
+#include <numeric>
 
 auto square(const auto& x) {
    if constexpr(requires{ x[0]; }) {
@@ -27,3 +29,5 @@ auto norm(const auto&... x) {
 template <class T> T norm(std::initializer_list<T> x) {
 	return std::sqrt(square(x));
 }
+
+#endif

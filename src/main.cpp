@@ -8,6 +8,7 @@
 #include <constants.h>
 #include <operators.h>
 #include <populations.h>
+#include <gmres.h>
 
 using namespace amrex;
 
@@ -132,7 +133,8 @@ int main(int argc, char* argv[]) {
          }
       }
       
-      Box box_c(IntVect{0,0,0}, IntVect{x_size-1, y_size-1, z_size-1}); // cell-centred
+      Box
+         box_c(IntVect{0,0,0}, IntVect{x_size-1, y_size-1, z_size-1}); // cell-centred
       
       BoxArray
          ba_c(box_c), // cell-centred, others generated via conversion as needed
@@ -143,7 +145,7 @@ int main(int argc, char* argv[]) {
          ba_ex = convert(ba_c,AMReXConst::btype_ex),
          ba_ey = convert(ba_c,AMReXConst::btype_ey),
          ba_ez = convert(ba_c,AMReXConst::btype_ez);
-                                                        
+      
       DistributionMapping dm(ba_c);
       
       MultiFab
@@ -182,21 +184,21 @@ int main(int argc, char* argv[]) {
       
       for (MFIter mfi(E_n); mfi.isValid(); ++mfi) {
          const Box&
-            bx_n = mfi.tilebox(AMReXConst::btype_n),
-            bx_fx = mfi.tilebox(AMReXConst::btype_fx),
-            bx_fy = mfi.tilebox(AMReXConst::btype_fy),
-            bx_fz = mfi.tilebox(AMReXConst::btype_fz);
+            bx_n = mfi.tilebox(AMReXConst::btype_n);
+            // bx_fx = mfi.tilebox(AMReXConst::btype_fx),
+            // bx_fy = mfi.tilebox(AMReXConst::btype_fy),
+            // bx_fz = mfi.tilebox(AMReXConst::btype_fz);
          const Array4<Real>&
-            En_array = E_n.array(mfi),
-            Bf_array_x = B_f[0].array(mfi),
-            Bf_array_y = B_f[1].array(mfi),
-            Bf_array_z = B_f[2].array(mfi);
+            En_array = E_n.array(mfi);
+            // Bf_array_x = B_f[0].array(mfi),
+            // Bf_array_y = B_f[1].array(mfi),
+            // Bf_array_z = B_f[2].array(mfi);
          
          ParallelFor(bx_n, [&](int ii, int jj, int kk) {
             Real
-               x = ii*dx[0] + x_min,
-               y = jj*dx[1] + y_min,
-               z = kk*dx[2] + z_min;
+               x = ii*dx[0] + x_min;
+               // y = jj*dx[1] + y_min,
+               // z = kk*dx[2] + z_min;
             // En_array(ii,jj,kk,0) = 0.0;
             // En_array(ii,jj,kk,1) = 0.0;
             // En_array(ii,jj,kk,2) = 0.0;
@@ -207,29 +209,29 @@ int main(int argc, char* argv[]) {
             En_array(ii,jj,kk,2) = std::cos(2*M_PI*x/(x_max - x_min));//*std::cos(y)*std::cos(z);
          });
          
-         ParallelFor(bx_fx, [&](int ii, int jj, int kk) {
-            Real
-               x = ii*dx[0] + x_min,
-               y = (jj+0.5)*dx[1] + y_min,
-               z = (kk+0.5)*dx[2] + z_min;
-            // Bf_array_x(ii,jj,kk) = 0.0;
-         });
+         // ParallelFor(bx_fx, [&](int ii, int jj, int kk) {
+         //    Real
+         //       x = ii*dx[0] + x_min,
+         //       y = (jj+0.5)*dx[1] + y_min,
+         //       z = (kk+0.5)*dx[2] + z_min;
+         //    // Bf_array_x(ii,jj,kk) = 0.0;
+         // });
 
-         ParallelFor(bx_fy, [&](int ii, int jj, int kk) {
-            Real
-               x = (ii+0.5)*dx[0] + x_min,
-               y = jj*dx[1] + y_min,
-               z = (kk+0.5)*dx[2] + z_min;
-            // Bf_array_y(ii,jj,kk) = 0.0;
-         });
+         // ParallelFor(bx_fy, [&](int ii, int jj, int kk) {
+         //    Real
+         //       x = (ii+0.5)*dx[0] + x_min,
+         //       y = jj*dx[1] + y_min,
+         //       z = (kk+0.5)*dx[2] + z_min;
+         //    // Bf_array_y(ii,jj,kk) = 0.0;
+         // });
 
-         ParallelFor(bx_fz, [&](int ii, int jj, int kk) {
-            Real
-               x = (ii+0.5)*dx[0] + x_min,
-               y = (jj+0.5)*dx[1] + y_min,
-               z = kk*dx[2] + z_min;
-            // Bf_array_z(ii,jj,kk) = ii;
-         });
+         // ParallelFor(bx_fz, [&](int ii, int jj, int kk) {
+         //    Real
+         //       x = (ii+0.5)*dx[0] + x_min,
+         //       y = (jj+0.5)*dx[1] + y_min,
+         //       z = kk*dx[2] + z_min;
+         //    // Bf_array_z(ii,jj,kk) = ii;
+         // });
       }
       
       // Fix non cell-centred data periodicity so that last valid point
@@ -295,7 +297,7 @@ int main(int argc, char* argv[]) {
             WriteSingleLevelPlotfile(pltfile, plt_Fab, {"Bx","By","Bz","Ex","Ey","Ez","EM_Energy"}, geom, time, step);
          }
          
-         MultiFab curlB_n = curl_f2n(B_f, dx);
+         MultiFab curlB_n = curl_f2n(B_f[0], B_f[1], B_f[2], dx);
          std::array<MultiFab,3> E_e = node2edge(E_n);
          for (int nn=0; nn<3; ++nn) {
             E_e[nn].FillBoundary(geom.periodicity());
@@ -306,26 +308,6 @@ int main(int argc, char* argv[]) {
          for (int nn=0; nn<3; ++nn) {
             curlE_f[nn].FillBoundary(geom.periodicity());
          }
-
-         // Print() << "curlB_n: " << sym_test(curlB_n,sym_dir) << std::endl
-         //         << "E_ex: " << sym_test(E_e[0],sym_dir) << std::endl
-         //         << "E_ey: " << sym_test(E_e[1],sym_dir) << std::endl
-         //         << "E_ez: " << sym_test(E_e[2],sym_dir) << std::endl
-         //         << "curlE_fx: " << sym_test(curlE_f[0],sym_dir) << std::endl
-         //         << "curlE_fy: " << sym_test(curlE_f[1],sym_dir) << std::endl
-         //         << "curlE_fz: " << sym_test(curlE_f[2],sym_dir) << std::endl;
-         
-         // Print() << "Step: " << step << std::endl
-         //         << "B_f:" << std::endl
-         //         << B_f[0].sum() + B_f[1].sum() + B_f[2].sum() << std::endl
-         //         << "E_n:" << std::endl
-         //         << E_n.sum() << std::endl
-         //         << "E_e" << std::endl
-         //         << E_e[0].sum() + E_e[1].sum() + E_e[2].sum() << std::endl
-         //         << "curl B_n:" << std::endl
-         //         << curlB_n.sum() << std::endl
-         //         << "curl E_f:" << std::endl
-         //         << curlE_f[0].sum() + curlE_f[1].sum() + curlE_f[2].sum() << std::endl << std::endl;
          
          for (MFIter mfi(E_n); mfi.isValid(); ++mfi) {
             const Box&
