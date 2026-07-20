@@ -164,8 +164,8 @@ MultiFab compute_energy(const MultiFab& B_c, const MultiFab& E_c, int nghost) {
       
       ParallelFor(bx_c, [&](int ii, int jj, int kk) {
          Real
-            B_mag = square(Bc_array(ii,jj,kk,0)) + square(Bc_array(ii,jj,kk,1)) + square(Bc_array(ii,jj,kk,2)),
-            E_mag = square(Ec_array(ii,jj,kk,0)) + square(Ec_array(ii,jj,kk,1)) + square(Ec_array(ii,jj,kk,2));
+            B_mag = math::square(Bc_array(ii,jj,kk,0)) + math::square(Bc_array(ii,jj,kk,1)) + math::square(Bc_array(ii,jj,kk,2)),
+            E_mag = math::square(Ec_array(ii,jj,kk,0)) + math::square(Ec_array(ii,jj,kk,1)) + math::square(Ec_array(ii,jj,kk,2));
          
          Energy_c_array(ii,jj,kk,0) += B_mag/(PhysConst::mu0*2);
          Energy_c_array(ii,jj,kk,1) += E_mag*PhysConst::eps0/2;

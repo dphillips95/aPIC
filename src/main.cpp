@@ -355,6 +355,12 @@ int main(int argc, char* argv[]) {
          //         << "B_fx: " << sym_test(B_f[0],sym_dir) << std::endl
          //         << "B_fy: " << sym_test(B_f[1],sym_dir) << std::endl
          //         << "B_fz: " << sym_test(B_f[2],sym_dir) << std::endl;
+
+         // Complete boundary conditions
+         E_n.FillBoundary(geom.periodicity());
+         for (int nn=0; nn<3; ++nn) {
+            B_f[nn].FillBoundary(geom.periodicity());
+         }
          
          time += dt;
       }

@@ -265,7 +265,7 @@ public:
    void apply(BE& Ax, const BE& x) {
       Ax.Copy(Ax,x,0);
       Ax.Saxpy_B(Ax, curl_n2f(x.getE_n(), this->dx, 0), this->tFactor);
-      Ax.Saxpy_En(Ax, curl_f2n(x.getB_fx(), x.getB_fy(), x.getB_fz(), this->dx, 0), -this->tFactor*square(PhysConst::c));
+      Ax.Saxpy_En(Ax, curl_f2n(x.getB_fx(), x.getB_fy(), x.getB_fz(), this->dx, 0), -this->tFactor*math::square(PhysConst::c));
    }
    
    // Assign lhs = rhs

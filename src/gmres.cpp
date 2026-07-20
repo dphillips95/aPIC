@@ -52,7 +52,7 @@ void gmres_step(std::array<MultiFab,3>& B_f, MultiFab& E_n, GpuArray<Real,3> dx,
    MultiFab curl_Bf = curl_f2n(B_f[0], B_f[1], B_f[2], dx, 0);
    
    b.Saxpy_B(b, curl_En, -dt*(1-theta));
-   b.Saxpy_En(b, curl_Bf, square(PhysConst::c)*dt*(1-theta));
+   b.Saxpy_En(b, curl_Bf, math::square(PhysConst::c)*dt*(1-theta));
    
    linop gmres_operator(E_n.boxArray(), E_n.distributionMap, E_n.n_grow[0], dx, dt*theta, period);
    
