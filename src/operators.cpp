@@ -119,7 +119,8 @@ std::array<MultiFab,3> node2edge(const MultiFab& node_data, int nghost) {
    return edge_data;
 }
 
-// Diagnostics: Compute cell energy
+// Diagnostics: Compute cell Magnetic and Electric energy - Output is MultiFab with three components - B energy, E energy, Total energy
+// TODO: Add Particle kinetic energies after particles added
 MultiFab compute_energy(const MultiFab& B_c, const MultiFab& E_c, int nghost) {
    // If number of ghost cells is not given (thus set to -1), copy from input MultiFab
    IntVect vect_nghost(nghost,nghost,nghost);
@@ -127,10 +128,10 @@ MultiFab compute_energy(const MultiFab& B_c, const MultiFab& E_c, int nghost) {
       vect_nghost = B_c.n_grow;
    }
    
-   MultiFab Energy_c = MultiFab(B_c.boxArray(), B_c.distributionMap, 1, vect_nghost);
+   MultiFab Energy_c = MultiFab(B_c.boxArray(), B_c.distributionMap, 3, vect_nghost);
    Energy_c.setVal(0.0);
    
-   for(MFIter mfi(B_c); mfi.isValid(); ++mfi) {
+   for (MFIter mfi(B_c); mfi.isValid(); ++mfi) {
       const Box& bx_c = mfi.fabbox();
       const Array4<const Real>&
          Bc_array = B_c.const_array(mfi),
@@ -142,7 +143,9 @@ MultiFab compute_energy(const MultiFab& B_c, const MultiFab& E_c, int nghost) {
             B_mag = square(Bc_array(ii,jj,kk,0)) + square(Bc_array(ii,jj,kk,1)) + square(Bc_array(ii,jj,kk,2)),
             E_mag = square(Ec_array(ii,jj,kk,0)) + square(Ec_array(ii,jj,kk,1)) + square(Ec_array(ii,jj,kk,2));
          
-         Energy_c_array(ii,jj,kk) += (B_mag/PhysConst::mu0 + E_mag*PhysConst::eps0)/2;
+         Energy_c_array(ii,jj,kk,0) += B_mag/(PhysConst::mu0*2);
+         Energy_c_array(ii,jj,kk,1) += E_mag*PhysConst::eps0/2;
+         Energy_c_array(ii,jj,kk,2) += (B_mag/PhysConst::mu0 + E_mag*PhysConst::eps0)/2;
       });
    }
 
@@ -150,8 +153,13 @@ MultiFab compute_energy(const MultiFab& B_c, const MultiFab& E_c, int nghost) {
 }
 
 // Boundaries: Fix Nodal Periodicity - Fixes nodal data (i.e. face, edge or node data) for periodic BCs so that final 'valid' node is equal to first 'valid' node
+// i.e. AMReX stores all nodes neighbouring valid cells
+// and with periodic BCs cells on opposite sides of the domain are actually neighbours
+// Hence the outer nodes of these cells are actually the same nodes
+// Theoretically should only be necessary to correct initial conditions,
+// (and possibly when mesh refining/generating new boxes)
+// If this is violated during the run then a bug in the code is responsible
 void node_period(MultiFab& mf, const Periodicity& period) {
-
    int nvar = mf.nComp();
    
    for (MFIter mfi(mf); mfi.isValid(); ++mfi) {
@@ -199,7 +207,7 @@ void node_period(MultiFab& mf, const Periodicity& period) {
    }
 }
 
-// Curl operators: Edge to Face - Curl is calculated at face centres using edges surrounding face
+// Derivative operators: Curl Edge to Face - Curl is calculated at face centres using edges surrounding face
 std::array<MultiFab,3> curl_e2f(const std::array<MultiFab,3>& edge_data, const GpuArray<Real,3>& dx, int nghost) {
    // If number of ghost cells is not given (thus set to -1), copy from input MultiFab
    IntVect vect_nghost(nghost,nghost,nghost);
@@ -250,7 +258,7 @@ std::array<MultiFab,3> curl_e2f(const std::array<MultiFab,3>& edge_data, const G
    return face_curl;
 }
 
-// Curl operators: Node to Face - Curl is calculated at face centres using edges surrounding face; edge values are averaged from neighbours as in node2edge
+// Derivative operators: Curl Node to Face - Curl is calculated at face centres using edges surrounding face; edge values are averaged from neighbours as in node2edge
 // Edge values are skipped, i.e. computes directly from node to face curl
 // This should therefore be equivalent to curl_e2f(node2edge(MF),dx)
 std::array<MultiFab,3> curl_n2f(const MultiFab& node_data, const GpuArray<Real,3>& dx, int nghost) {
@@ -307,7 +315,7 @@ std::array<MultiFab,3> curl_n2f(const MultiFab& node_data, const GpuArray<Real,3
    return face_curl;
 }
 
-// Curl operators: Face to Node - Curl is calculated at nodes component-wise using faces adjacent each edge connecting to node
+// Derivative operators: Curl Face to Node - Curl is calculated at nodes component-wise using faces adjacent each edge connecting to node
 MultiFab curl_f2n(const MultiFab& xface_data, const MultiFab& yface_data, const MultiFab& zface_data, const GpuArray<Real,3>& dx, int nghost) {
    // If number of ghost cells is not given (thus set to -1), copy from input MultiFab
    IntVect vect_nghost(nghost,nghost,nghost);
@@ -346,6 +354,74 @@ MultiFab curl_f2n(const MultiFab& xface_data, const MultiFab& yface_data, const 
    }
 
    return node_curl;
+}
+
+// Derivative operators: Divergence Face to Centre - Divergence is calculated from face-centred data as the change across the cell in each face direction
+amrex::MultiFab div_f2c(const amrex::MultiFab& xface_data, const amrex::MultiFab& yface_data, const amrex::MultiFab& zface_data, const amrex::GpuArray<amrex::Real,3>& dx, int nghost) {
+   // If number of ghost cells is not given (thus set to -1), copy from input MultiFab
+   IntVect vect_nghost(nghost,nghost,nghost);
+   if (nghost == -1) {
+      vect_nghost = xface_data.n_grow;
+   }
+   
+   MultiFab cell_div(convert(xface_data.boxArray(),AMReXConst::btype_c),xface_data.distributionMap, 1, vect_nghost);
+   
+   cell_div.setVal(0.0);
+   
+   for (MFIter mfi(cell_div); mfi.isValid(); ++mfi) {
+      const Box& bx_n = mfi.validbox();
+      const Array4<const Real>&
+         f_array_x = xface_data.const_array(mfi),
+         f_array_y = yface_data.const_array(mfi),
+         f_array_z = zface_data.const_array(mfi);
+      const Array4<Real>& cd_array = cell_div.array(mfi);
+      
+      ParallelFor(bx_n, [&](int ii, int jj, int kk) {
+         cd_array(ii,jj,kk) += (f_array_x(ii+1,jj  ,kk  ) - f_array_x(ii  ,jj  ,kk  ))/dx[0];
+         cd_array(ii,jj,kk) += (f_array_y(ii  ,jj+1,kk  ) - f_array_y(ii  ,jj  ,kk  ))/dx[1];
+         cd_array(ii,jj,kk) += (f_array_z(ii  ,jj  ,kk+1) - f_array_z(ii  ,jj  ,kk  ))/dx[2];
+      });
+   }
+
+   return cell_div;
+}
+
+// Derivative operators: Divergence Node to Centre - Divergence is calculated by first averaging node to face data then applying the same rule as div_f2c
+amrex::MultiFab div_n2c(const amrex::MultiFab& node_data, const amrex::GpuArray<amrex::Real,3>& dx, int nghost) {
+   // If number of ghost cells is not given (thus set to -1), copy from input MultiFab
+   IntVect vect_nghost(nghost,nghost,nghost);
+   if (nghost == -1) {
+      vect_nghost = node_data.n_grow;
+   }
+   
+   MultiFab cell_div(convert(node_data.boxArray(),AMReXConst::btype_c),node_data.distributionMap, 1, vect_nghost);
+   
+   cell_div.setVal(0.0);
+   
+   for (MFIter mfi(cell_div); mfi.isValid(); ++mfi) {
+      const Box& bx_n = mfi.validbox();
+      const Array4<const Real>& n_array = node_data.const_array(mfi);
+      const Array4<Real>& cd_array = cell_div.array(mfi);
+      
+      ParallelFor(bx_n, [&](int ii, int jj, int kk) {
+         cd_array(ii,jj,kk) += (n_array(ii+1,jj  ,kk  ,0) - n_array(ii  ,jj  ,kk  ,0))/(4*dx[0]);
+         cd_array(ii,jj,kk) += (n_array(ii+1,jj+1,kk  ,0) - n_array(ii  ,jj+1,kk  ,0))/(4*dx[0]);
+         cd_array(ii,jj,kk) += (n_array(ii+1,jj  ,kk+1,0) - n_array(ii  ,jj  ,kk+1,0))/(4*dx[0]);
+         cd_array(ii,jj,kk) += (n_array(ii+1,jj+1,kk+1,0) - n_array(ii  ,jj+1,kk+1,0))/(4*dx[0]);
+
+         cd_array(ii,jj,kk) += (n_array(ii  ,jj+1,kk  ,1) - n_array(ii  ,jj  ,kk  ,1))/(4*dx[1]);
+         cd_array(ii,jj,kk) += (n_array(ii+1,jj+1,kk  ,1) - n_array(ii+1,jj  ,kk  ,1))/(4*dx[1]);
+         cd_array(ii,jj,kk) += (n_array(ii  ,jj+1,kk+1,1) - n_array(ii  ,jj  ,kk+1,1))/(4*dx[1]);
+         cd_array(ii,jj,kk) += (n_array(ii+1,jj+1,kk+1,1) - n_array(ii+1,jj  ,kk+1,1))/(4*dx[1]);
+
+         cd_array(ii,jj,kk) += (n_array(ii  ,jj  ,kk+1,2) - n_array(ii  ,jj  ,kk  ,2))/(4*dx[2]);
+         cd_array(ii,jj,kk) += (n_array(ii+1,jj  ,kk+1,2) - n_array(ii+1,jj  ,kk  ,2))/(4*dx[2]);
+         cd_array(ii,jj,kk) += (n_array(ii  ,jj+1,kk+1,2) - n_array(ii  ,jj+1,kk  ,2))/(4*dx[2]);
+         cd_array(ii,jj,kk) += (n_array(ii+1,jj+1,kk+1,2) - n_array(ii+1,jj+1,kk  ,2))/(4*dx[2]);
+      });
+   }
+
+   return cell_div;
 }
 
 // Test: Symmetry - Checks multifab data is symmetric in given direction(s); symmetry direction(s) are given by '1' in 3D 'dir' vector.

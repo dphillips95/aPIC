@@ -16,7 +16,7 @@ int main(int argc, char* argv[]) {
    Initialize(argc,argv);
    
    {
-
+      
       constexpr int nghost = 1;
       constexpr IntVect vectghost(nghost,nghost,nghost);
       
@@ -33,7 +33,7 @@ int main(int argc, char* argv[]) {
       int seed = 0, dimensions = 3;
       bool v_1D = false;
       int steps, save_steps = 0;
-      Real dt, theta = 0.5, rtol = 1e-15, atol = 0, Vdt_dx_cap = 0.75;
+      Real dt, theta = 0.5, rtol = 1e-15, atol = -1, Vdt_dx_cap = 0.75;
       std::vector<std::string> pop_name_list, Btype, Etype;
       Real Bx = 0, By = 0, Bz = 0, Ex = 0, Ey = 0, Ez = 0,
          rand_Bx_min = 0, rand_Bx_max = 0,
@@ -133,6 +133,13 @@ int main(int argc, char* argv[]) {
          }
       }
       
+      std::ofstream datalog(Log::fieldlog_filename);
+      
+      datalog << std::setw(Log::stepWidth) << "Step"
+              << std::setw(Log::datWidth) << "B_energy"
+              << std::setw(Log::datWidth) << "E_energy"
+              << std::setw(Log::datWidth) << "Total_energy" << std::endl;
+      
       Box
          box_c(IntVect{0,0,0}, IntVect{x_size-1, y_size-1, z_size-1}); // cell-centred
       
@@ -154,7 +161,7 @@ int main(int argc, char* argv[]) {
          E_n(ba_n, dm, 3, nghost),
          B_c(ba_c, dm, 3, nghost),
          E_c(ba_c, dm, 3, nghost),
-         Energy_c(ba_c, dm, 1, nghost);
+         Energy_c(ba_c, dm, 3, nghost);
 
       std::array<MultiFab,3> Jp_f = {
          MultiFab(ba_fx, dm, 1, nghost),
@@ -205,7 +212,7 @@ int main(int argc, char* argv[]) {
             // En_array(ii,jj,kk,0) = jj;
             // En_array(ii,jj,kk,1) = 0.0;
             // En_array(ii,jj,kk,2) = 0.0;
-            En_array(ii,jj,kk,1) = std::sin(2*M_PI*x/(x_max - x_min));//*std::sin(y)*std::sin(z);
+            // En_array(ii,jj,kk,1) = std::sin(2*M_PI*x/(x_max - x_min));//*std::sin(y)*std::sin(z);
             En_array(ii,jj,kk,2) = std::cos(2*M_PI*x/(x_max - x_min));//*std::cos(y)*std::cos(z);
          });
          
@@ -280,86 +287,56 @@ int main(int argc, char* argv[]) {
          if (step % save_steps == 0) {
             const std::string& pltfile = amrex::Concatenate("plt", step, 5);
             
-            MultiFab plt_Fab(ba_c, dm, 7, nghost);
-
+            MultiFab plt_Fab(ba_c, dm, 9, nghost);
+            
             B_c = face2cell(B_f);
             E_c = node2cell(E_n);
-
+            
             B_c.FillBoundary(geom.periodicity());
             E_c.FillBoundary(geom.periodicity());
-
+            
             Energy_c = compute_energy(B_c,E_c);
+
+            Real
+               total_B_energy = 0.0,
+               total_E_energy = 0.0,
+               total_EM_energy = 0.0;
+
+            for (MFIter mfi(Energy_c); mfi.isValid(); ++mfi) {
+               const Box& bx_c = mfi.tilebox(AMReXConst::btype_c);
+               const Array4<Real>& Energy_c_array = Energy_c.array(mfi);
+
+               ParallelFor(bx_c, [&](int ii, int jj, int kk) {
+                  total_B_energy += Energy_c_array(ii,jj,kk,0);
+                  total_E_energy += Energy_c_array(ii,jj,kk,1);
+                  total_EM_energy += Energy_c_array(ii,jj,kk,2);
+               });
+            }
+
+            datalog << std::setw(Log::stepWidth) << step
+                    << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_B_energy
+                    << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_E_energy
+                    << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_EM_energy << std::endl;
             
             MultiFab::Copy(plt_Fab, B_c, 0, 0, 3, nghost);
             MultiFab::Copy(plt_Fab, E_c, 0, 3, 3, nghost);
-            MultiFab::Copy(plt_Fab, Energy_c, 0, 6, 1, nghost);
+            MultiFab::Copy(plt_Fab, Energy_c, 0, 6, 3, nghost);
             
-            WriteSingleLevelPlotfile(pltfile, plt_Fab, {"Bx","By","Bz","Ex","Ey","Ez","EM_Energy"}, geom, time, step);
-         }
-         
-         MultiFab curlB_n = curl_f2n(B_f[0], B_f[1], B_f[2], dx);
-         std::array<MultiFab,3> E_e = node2edge(E_n);
-         for (int nn=0; nn<3; ++nn) {
-            E_e[nn].FillBoundary(geom.periodicity());
-         }
-         std::array<MultiFab,3> curlE_f = curl_e2f(E_e, dx);
-         
-         curlB_n.FillBoundary(geom.periodicity());
-         for (int nn=0; nn<3; ++nn) {
-            curlE_f[nn].FillBoundary(geom.periodicity());
-         }
-         
-         for (MFIter mfi(E_n); mfi.isValid(); ++mfi) {
-            const Box&
-               bx_n = mfi.tilebox(),
-               bx_fx = mfi.tilebox(AMReXConst::btype_fx),
-               bx_fy = mfi.tilebox(AMReXConst::btype_fy),
-               bx_fz = mfi.tilebox(AMReXConst::btype_fz);
-            const Array4<const Real>&
-               Bnc_array = curlB_n.const_array(mfi),
-               Efc_array_x = curlE_f[0].const_array(mfi),
-               Efc_array_y = curlE_f[1].const_array(mfi),
-               Efc_array_z = curlE_f[2].const_array(mfi);
-            const Array4<Real>&
-               En_array = E_n.array(mfi),
-               Bf_array_x = B_f[0].array(mfi),
-               Bf_array_y = B_f[1].array(mfi),
-               Bf_array_z = B_f[2].array(mfi);
-            
-            // Print() << "curl B_n: " << std::endl;
-            ParallelFor(bx_n, 3, [&](int ii, int jj, int kk, int nn) {
-               // Print() << ii << "," << jj << "," << kk << "," << nn << ": " << Bnc_array(ii,jj,kk,nn) << std::endl;
-               En_array(ii,jj,kk,nn) += dt*Bnc_array(ii,jj,kk,nn)*(PhysConst::c*PhysConst::c);
-            });
-               
-            ParallelFor(bx_fx, [&](int ii, int jj, int kk) {
-               Bf_array_x(ii,jj,kk) -= dt*Efc_array_x(ii,jj,kk);
-            });
-            
-            ParallelFor(bx_fy, [&](int ii, int jj, int kk) {
-               Bf_array_y(ii,jj,kk) -= dt*Efc_array_y(ii,jj,kk);
-            });
-            
-            ParallelFor(bx_fz, [&](int ii, int jj, int kk) {
-               Bf_array_z(ii,jj,kk) -= dt*Efc_array_z(ii,jj,kk);
-            });
-         }
-         
-         E_n.FillBoundary(geom.periodicity());
-         for (int nn=0; nn<3; ++nn) {
-            B_f[nn].FillBoundary(geom.periodicity());
+            WriteSingleLevelPlotfile(pltfile, plt_Fab, {"Bx","By","Bz","Ex","Ey","Ez","B_Energy","E_Energy","EM_Energy"}, geom, time, step);
          }
 
-      // Print() << "E_n: " << sym_test(E_n,sym_dir) << std::endl
-      //         << "B_fx: " << sym_test(B_f[0],sym_dir) << std::endl
-      //         << "B_fy: " << sym_test(B_f[1],sym_dir) << std::endl
-      //         << "B_fz: " << sym_test(B_f[2],sym_dir) << std::endl;
+         gmres_step(B_f, E_n, dx, dt, theta, geom.periodicity(), rtol, atol);
+
+         // Print() << "E_n: " << sym_test(E_n,sym_dir) << std::endl
+         //         << "B_fx: " << sym_test(B_f[0],sym_dir) << std::endl
+         //         << "B_fy: " << sym_test(B_f[1],sym_dir) << std::endl
+         //         << "B_fz: " << sym_test(B_f[2],sym_dir) << std::endl;
          
          time += dt;
       }
       const std::string& pltfile = amrex::Concatenate("plt", steps, 5);
       
-      MultiFab plt_Fab(ba_c, dm, 7, nghost);
+      MultiFab plt_Fab(ba_c, dm, 9, nghost);
       
       B_c = face2cell(B_f);
       E_c = node2cell(E_n);
@@ -368,12 +345,33 @@ int main(int argc, char* argv[]) {
       E_c.FillBoundary(geom.periodicity());
 
       Energy_c = compute_energy(B_c,E_c);
+
+      Real
+         total_B_energy = 0.0,
+         total_E_energy = 0.0,
+         total_EM_energy = 0.0;
+      
+      for (MFIter mfi(Energy_c); mfi.isValid(); ++mfi) {
+         const Box& bx_c = mfi.tilebox(AMReXConst::btype_c);
+         const Array4<Real>& Energy_c_array = Energy_c.array(mfi);
+         
+         ParallelFor(bx_c, [&](int ii, int jj, int kk) {
+            total_B_energy += Energy_c_array(ii,jj,kk,0);
+            total_E_energy += Energy_c_array(ii,jj,kk,1);
+            total_EM_energy += Energy_c_array(ii,jj,kk,2);
+         });
+      }
+      
+      datalog << std::setw(Log::stepWidth) << steps
+              << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_B_energy
+              << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_E_energy
+              << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_EM_energy << std::endl;
       
       MultiFab::Copy(plt_Fab, B_c, 0, 0, 3, nghost);
       MultiFab::Copy(plt_Fab, E_c, 0, 3, 3, nghost);
-      MultiFab::Copy(plt_Fab, Energy_c, 0, 6, 1, nghost);
+      MultiFab::Copy(plt_Fab, Energy_c, 0, 6, 3, nghost);
       
-      WriteSingleLevelPlotfile(pltfile, plt_Fab, {"Bx","By","Bz","Ex","Ey","Ez","EM_Energy"}, geom, time, steps);
+      WriteSingleLevelPlotfile(pltfile, plt_Fab, {"Bx","By","Bz","Ex","Ey","Ez","B_Energy","E_Energy","EM_Energy"}, geom, time, steps);
    }
    Finalize();
 }
