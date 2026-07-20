@@ -28,7 +28,6 @@ Author(s): David Phillips
 #include <cmath>
 #include <numeric>
 
-
 auto square(const auto& x) {
    if constexpr(requires{ x[0]; }) {
       std::remove_cvref_t<decltype(x[0])> ret{0};

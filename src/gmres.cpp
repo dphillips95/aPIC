@@ -30,7 +30,7 @@ Author(s): David Phillips
 #include <gmres.h>
 #include <constants.h>
 #include <operators.h>
-#include <math.h>
+#include <math_functions.h>
 
 using namespace amrex;
 

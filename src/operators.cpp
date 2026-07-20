@@ -29,7 +29,7 @@ Author(s): David Phillips
 
 #include <operators.h>
 #include <constants.h>
-#include <math.h>
+#include <math_functions.h>
 
 using namespace amrex;
 

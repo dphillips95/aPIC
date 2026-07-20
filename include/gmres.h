@@ -32,7 +32,7 @@ Author(s): David Phillips
 
 #include <constants.h>
 #include <operators.h>
-#include <math.h>
+#include <math_functions.h>
 
 // GMRES linear operator class
 // The "vector" is a class BE consisting of MultiFabs of B and E, and ahandful of class methods for norms etc.
