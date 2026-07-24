@@ -263,9 +263,25 @@ public:
    
    // Actual operator matrix product, i.e. x input, Ax output
    void apply(BE& Ax, const BE& x) {
+      BL_PROFILE("gmres_apply()");
+      static amrex::MultiFab curl_Bf(convert(x.getE_n().boxArray(),AMReXConst::btype_n),x.getE_n().distributionMap, 3, 0);
+      static std::array<amrex::MultiFab,3> curl_En = {
+         amrex::MultiFab(convert(x.getE_n().boxArray(),AMReXConst::btype_fx),x.getE_n().distributionMap, 1, 0),
+         amrex::MultiFab(convert(x.getE_n().boxArray(),AMReXConst::btype_fy),x.getE_n().distributionMap, 1, 0),
+         amrex::MultiFab(convert(x.getE_n().boxArray(),AMReXConst::btype_fz),x.getE_n().distributionMap, 1, 0)
+      };
+      
       Ax.Copy(Ax,x,0);
-      Ax.Saxpy_B(Ax, curl_n2f(x.getE_n(), this->dx, 0), this->tFactor);
-      Ax.Saxpy_En(Ax, curl_f2n(x.getB_fx(), x.getB_fy(), x.getB_fz(), this->dx, 0), -this->tFactor*math::square(PhysConst::c));
+
+      BL_PROFILE_VAR("gmres_curl_En()",TIMER_curl_En);
+      curl_n2f(curl_En, x.getE_n(), this->dx);
+      BL_PROFILE_VAR_STOP(TIMER_curl_En);
+      BL_PROFILE_VAR("gmres_curl_Bf()",TIMER_curl_Bf);
+      curl_f2n(curl_Bf, x.getB_fx(), x.getB_fy(), x.getB_fz(), this->dx);
+      BL_PROFILE_VAR_STOP(TIMER_curl_Bf);
+      
+      Ax.Saxpy_B(Ax, curl_En, this->tFactor);
+      Ax.Saxpy_En(Ax, curl_Bf, -this->tFactor*math::square(PhysConst::c));
    }
    
    // Assign lhs = rhs

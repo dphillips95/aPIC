@@ -19,7 +19,7 @@ License along with this program. If not, see
 <https://www.gnu.org/licenses/>.
 
 
-Author(s): David Phillips
+Author(s): David Phillips, Ilja Honkonen
 */
 
 #ifndef MATH_FUNCTIONS_H_
@@ -29,7 +29,7 @@ Author(s): David Phillips
 #include <numeric>
 
 namespace math {
-   // auto square(){ return 0; }
+   inline auto square(){ return 0; }
    auto square(const auto& x) {
       if constexpr(requires{ x[0]; }) {
          std::remove_cvref_t<decltype(x[0])> ret{0};
@@ -50,10 +50,12 @@ namespace math {
    }
    
    auto norm(const auto&... x) {
-      return std::sqrt(square(x...));
+      using std::sqrt;
+      return sqrt(square(x...));
    }
    template <class T> T norm(std::initializer_list<T> x) {
-      return std::sqrt(square(x));
+      using std::sqrt;
+      return sqrt(square(x));
    }
 }
 

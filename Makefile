@@ -1,4 +1,5 @@
 AMREX_HOME ?= $(HOME)/amrex
+HDF5_HOME ?= /usr/lib/x86_64-linux-gnu/hdf5/serial
 
 DEBUG = TRUE
 COMP = gnu
@@ -9,7 +10,10 @@ USE_MPI = FALSE
 USE_OMP = FALSE
 USE_CUDA = FALSE
 USE_HIP = FALSE
+USE_HDF5 = TRUE
 PRECISION = DOUBLE
+TINY_PROFILE = TRUE
+PROFILE = FALSE
 
 include Make.package
 include $(AMREX_HOME)/Tools/GNUMake/Make.defs

@@ -38,6 +38,7 @@ using namespace amrex;
 
 int main(int argc, char* argv[]) {
    Initialize(argc,argv);
+   BL_PROFILE_VAR("main()",pmain);
    
    {
       
@@ -52,6 +53,8 @@ int main(int argc, char* argv[]) {
 
       Array<int,3> periodicity = {false,false,false};
 
+      const int nprocs = ParallelDescriptor::NProcs();
+      
       int max_grid_size = 10;
 
       int seed = 0, dimensions = 3;
@@ -62,7 +65,10 @@ int main(int argc, char* argv[]) {
       Real Bx = 0, By = 0, Bz = 0, Ex = 0, Ey = 0, Ez = 0,
          rand_Bx_min = 0, rand_Bx_max = 0,
          rand_By_min = 0, rand_By_max = 0,
-         rand_Bz_min = 0, rand_Bz_max = 0;
+         rand_Bz_min = 0, rand_Bz_max = 0,
+         rand_Ex_min = 0, rand_Ex_max = 0,
+         rand_Ey_min = 0, rand_Ey_max = 0,
+         rand_Ez_min = 0, rand_Ez_max = 0;
       Real mass_ratio = PhysConst::m_p/PhysConst::m_e;
 
       std::vector<Population> pop_list;
@@ -130,6 +136,13 @@ int main(int argc, char* argv[]) {
                inp_E.query("Ex", Ex);
                inp_E.query("Ey", Ey);
                inp_E.query("Ez", Ez);
+            } else if (tmp == "rand") {
+               inp_E.query("rand_Ex_min", rand_Ex_min);
+               inp_E.query("rand_Ex_max", rand_Ex_max);
+               inp_E.query("rand_Ey_min", rand_Ey_min);
+               inp_E.query("rand_Ey_max", rand_Ey_max);
+               inp_E.query("rand_Ez_min", rand_Ez_min);
+               inp_E.query("rand_Ez_max", rand_Ez_max);
             }
          }
 
@@ -156,6 +169,8 @@ int main(int argc, char* argv[]) {
             pop_list.push_back(tmp);
          }
       }
+
+      InitRandom(seed, nprocs, 0);
       
       std::ofstream datalog(Log::fieldlog_filename);
       
@@ -215,21 +230,21 @@ int main(int argc, char* argv[]) {
       
       for (MFIter mfi(E_n); mfi.isValid(); ++mfi) {
          const Box&
-            bx_n = mfi.tilebox(AMReXConst::btype_n);
-            // bx_fx = mfi.tilebox(AMReXConst::btype_fx),
-            // bx_fy = mfi.tilebox(AMReXConst::btype_fy),
-            // bx_fz = mfi.tilebox(AMReXConst::btype_fz);
+            bx_n = mfi.tilebox(AMReXConst::btype_n),
+            bx_fx = mfi.tilebox(AMReXConst::btype_fx),
+            bx_fy = mfi.tilebox(AMReXConst::btype_fy),
+            bx_fz = mfi.tilebox(AMReXConst::btype_fz);
          const Array4<Real>&
-            En_array = E_n.array(mfi);
-            // Bf_array_x = B_f[0].array(mfi),
-            // Bf_array_y = B_f[1].array(mfi),
-            // Bf_array_z = B_f[2].array(mfi);
+            En_array = E_n.array(mfi),
+            Bf_array_x = B_f[0].array(mfi),
+            Bf_array_y = B_f[1].array(mfi),
+            Bf_array_z = B_f[2].array(mfi);
          
          ParallelFor(bx_n, [&](int ii, int jj, int kk) {
-            Real
-               x = ii*dx[0] + x_min;
-               // y = jj*dx[1] + y_min,
-               // z = kk*dx[2] + z_min;
+            // Real
+            //    x = ii*dx[0] + x_min;
+            //    y = jj*dx[1] + y_min,
+            //    z = kk*dx[2] + z_min;
             // En_array(ii,jj,kk,0) = 0.0;
             // En_array(ii,jj,kk,1) = 0.0;
             // En_array(ii,jj,kk,2) = 0.0;
@@ -237,32 +252,68 @@ int main(int argc, char* argv[]) {
             // En_array(ii,jj,kk,1) = 0.0;
             // En_array(ii,jj,kk,2) = 0.0;
             // En_array(ii,jj,kk,1) = std::sin(2*M_PI*x/(x_max - x_min));//*std::sin(y)*std::sin(z);
-            En_array(ii,jj,kk,2) = std::cos(2*M_PI*x/(x_max - x_min));//*std::cos(y)*std::cos(z);
+            // En_array(ii,jj,kk,2) = std::cos(2*M_PI*x/(x_max - x_min));//*std::cos(y)*std::cos(z);
+
+            for (std::string tmp : Etype) {
+               if (tmp == "uniform") {
+                  En_array(ii,jj,kk,0) += Ex;
+                  En_array(ii,jj,kk,1) += Ey;
+                  En_array(ii,jj,kk,2) += Ez;
+               } else if (tmp == "rand") {
+                  En_array(ii,jj,kk,0) += Random()*(rand_Ex_max - rand_Ex_min) + rand_Ex_min;
+                  En_array(ii,jj,kk,1) += Random()*(rand_Ey_max - rand_Ey_min) + rand_Ey_min;
+                  En_array(ii,jj,kk,2) += Random()*(rand_Ez_max - rand_Ez_min) + rand_Ez_min;
+               }
+            }  
          });
          
-         // ParallelFor(bx_fx, [&](int ii, int jj, int kk) {
-         //    Real
-         //       x = ii*dx[0] + x_min,
-         //       y = (jj+0.5)*dx[1] + y_min,
-         //       z = (kk+0.5)*dx[2] + z_min;
-         //    // Bf_array_x(ii,jj,kk) = 0.0;
-         // });
+         ParallelFor(bx_fx, [&](int ii, int jj, int kk) {
+            // Real
+            //    x = ii*dx[0] + x_min,
+            //    y = (jj+0.5)*dx[1] + y_min,
+            //    z = (kk+0.5)*dx[2] + z_min;
+            // Bf_array_x(ii,jj,kk) = 0.0;
 
-         // ParallelFor(bx_fy, [&](int ii, int jj, int kk) {
-         //    Real
-         //       x = (ii+0.5)*dx[0] + x_min,
-         //       y = jj*dx[1] + y_min,
-         //       z = (kk+0.5)*dx[2] + z_min;
-         //    // Bf_array_y(ii,jj,kk) = 0.0;
-         // });
+            for (std::string tmp : Btype) {
+               if (tmp == "uniform") {
+                  Bf_array_x(ii,jj,kk) += Bx;
+               } else if (tmp == "rand") {
+                  Bf_array_x(ii,jj,kk) += Random()*(rand_Bx_max - rand_Bx_min) + rand_Bx_min;
+               }
+            }  
+         });
 
-         // ParallelFor(bx_fz, [&](int ii, int jj, int kk) {
-         //    Real
-         //       x = (ii+0.5)*dx[0] + x_min,
-         //       y = (jj+0.5)*dx[1] + y_min,
-         //       z = kk*dx[2] + z_min;
-         //    // Bf_array_z(ii,jj,kk) = ii;
-         // });
+         ParallelFor(bx_fy, [&](int ii, int jj, int kk) {
+            // Real
+            //    x = (ii+0.5)*dx[0] + x_min,
+            //    y = jj*dx[1] + y_min,
+            //    z = (kk+0.5)*dx[2] + z_min;
+            // Bf_array_y(ii,jj,kk) = 0.0;
+
+            for (std::string tmp : Btype) {
+               if (tmp == "uniform") {
+                  Bf_array_y(ii,jj,kk) += By;
+               } else if (tmp == "rand") {
+                  Bf_array_y(ii,jj,kk) += Random()*(rand_By_max - rand_By_min) + rand_By_min;
+               }
+            }  
+         });
+
+         ParallelFor(bx_fz, [&](int ii, int jj, int kk) {
+            // Real
+            //    x = (ii+0.5)*dx[0] + x_min,
+            //    y = (jj+0.5)*dx[1] + y_min,
+            //    z = kk*dx[2] + z_min;
+            // Bf_array_z(ii,jj,kk) = ii;
+
+            for (std::string tmp : Btype) {
+               if (tmp == "uniform") {
+                  Bf_array_z(ii,jj,kk) += Bz;
+               } else if (tmp == "rand") {
+                  Bf_array_z(ii,jj,kk) += Random()*(rand_Bz_max - rand_Bz_min) + rand_Bz_min;
+               }
+            }  
+         });
       }
       
       // Fix non cell-centred data periodicity so that last valid point
@@ -319,7 +370,7 @@ int main(int argc, char* argv[]) {
             B_c.FillBoundary(geom.periodicity());
             E_c.FillBoundary(geom.periodicity());
             
-            Energy_c = compute_energy(B_c,E_c);
+            Energy_c = compute_EM_energy(B_c,E_c);
 
             Real
                total_B_energy = 0.0,
@@ -346,7 +397,7 @@ int main(int argc, char* argv[]) {
             MultiFab::Copy(plt_Fab, E_c, 0, 3, 3, nghost);
             MultiFab::Copy(plt_Fab, Energy_c, 0, 6, 3, nghost);
             
-            WriteSingleLevelPlotfile(pltfile, plt_Fab, {"Bx","By","Bz","Ex","Ey","Ez","B_Energy","E_Energy","EM_Energy"}, geom, time, step);
+            WriteSingleLevelPlotfileHDF5(pltfile, plt_Fab, {"Bx","By","Bz","Ex","Ey","Ez","B_Energy","E_Energy","EM_Energy"}, geom, time, step);
          }
 
          gmres_step(B_f, E_n, dx, dt, theta, geom.periodicity(), rtol, atol);
@@ -374,7 +425,7 @@ int main(int argc, char* argv[]) {
       B_c.FillBoundary(geom.periodicity());
       E_c.FillBoundary(geom.periodicity());
 
-      Energy_c = compute_energy(B_c,E_c);
+      Energy_c = compute_EM_energy(B_c,E_c);
 
       Real
          total_B_energy = 0.0,
@@ -401,7 +452,9 @@ int main(int argc, char* argv[]) {
       MultiFab::Copy(plt_Fab, E_c, 0, 3, 3, nghost);
       MultiFab::Copy(plt_Fab, Energy_c, 0, 6, 3, nghost);
       
-      WriteSingleLevelPlotfile(pltfile, plt_Fab, {"Bx","By","Bz","Ex","Ey","Ez","B_Energy","E_Energy","EM_Energy"}, geom, time, steps);
+      WriteSingleLevelPlotfileHDF5(pltfile, plt_Fab, {"Bx","By","Bz","Ex","Ey","Ez","B_Energy","E_Energy","EM_Energy"}, geom, time, steps);
    }
+
+   BL_PROFILE_VAR_STOP(pmain);
    Finalize();
 }
