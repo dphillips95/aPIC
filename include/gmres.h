@@ -42,167 +42,173 @@ Author(s): David Phillips
 // Due to staggered grid, face B multiFabs are separate while node E is kept together
 class BE {
 private:
-   amrex::MultiFab B_fx;
-   amrex::MultiFab B_fy;
-   amrex::MultiFab B_fz;
-   amrex::MultiFab E_n;
-   amrex::Periodicity period;
+   amrex::BoxArray m_ba;
+   amrex::DistributionMapping m_dm;
+   amrex::MultiFab m_B_fx;
+   amrex::MultiFab m_B_fy;
+   amrex::MultiFab m_B_fz;
+   amrex::MultiFab m_E_n;
+   amrex::Periodicity m_period;
+   int m_nghost;
 public:
    BE() {
       
    }
    
-   BE(const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, const int nghost, const amrex::Periodicity input_period) {
-      B_fx = amrex::MultiFab(convert(ba,AMReXConst::btype_fx),dm,1,nghost);
-      B_fy = amrex::MultiFab(convert(ba,AMReXConst::btype_fy),dm,1,nghost);
-      B_fz = amrex::MultiFab(convert(ba,AMReXConst::btype_fz),dm,1,nghost);
-      E_n = amrex::MultiFab(convert(ba,AMReXConst::btype_n),dm,3,nghost);
+   BE(const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, const int nghost, const amrex::Periodicity period) {
+      m_B_fx = amrex::MultiFab(convert(ba,AMReXConst::btype_fx),dm,1,nghost);
+      m_B_fy = amrex::MultiFab(convert(ba,AMReXConst::btype_fy),dm,1,nghost);
+      m_B_fz = amrex::MultiFab(convert(ba,AMReXConst::btype_fz),dm,1,nghost);
+      m_E_n = amrex::MultiFab(convert(ba,AMReXConst::btype_n),dm,3,nghost);
       this->setVal(0.0);
-      
-      period = input_period;
+
+      m_ba = convert(ba,AMReXConst::btype_c);
+      m_dm = dm;
+      m_nghost = nghost;
+      m_period = period;
    }
    
    BE copy_dim(int nghost = -1) const {
       // If number of ghost cells is not given (thus set to -1), copy from BE
       if (nghost == -1) {
-         nghost = E_n.n_grow[0];
+         nghost = m_nghost;
       }
       
-      BE new_BE(E_n.boxArray(), E_n.distributionMap, nghost, period);
+      BE new_BE(m_ba, m_dm, nghost, m_period);
       
       return new_BE;
    }
    
    const amrex::MultiFab& getB_fx() const {
-      return B_fx;
+      return m_B_fx;
    }
    const amrex::MultiFab& getB_fy() const {
-      return B_fy;
+      return m_B_fy;
    }
    const amrex::MultiFab& getB_fz() const {
-      return B_fz;
+      return m_B_fz;
    }
    const amrex::MultiFab& getE_n() const {
-      return E_n;
+      return m_E_n;
    }
 
    // Return number of ghost cells
-   int nGrow_Bfx() const { return B_fx.nGrow(); }
-   int nGrow_Bfy() const { return B_fy.nGrow(); }
-   int nGrow_Bfz() const { return B_fz.nGrow(); }
-   int nGrow_En() const { return E_n.nGrow(); }
+   int nGrow_Bfx() const { return m_B_fx.nGrow(); }
+   int nGrow_Bfy() const { return m_B_fy.nGrow(); }
+   int nGrow_Bfz() const { return m_B_fz.nGrow(); }
+   int nGrow_En() const { return m_E_n.nGrow(); }
    
-   void Copy_Bfx(BE& lhs, const amrex::MultiFab& rhs) {
-      amrex::MultiFab::Copy(lhs.B_fx, rhs, 0, 0, 1, rhs.nGrow());
+   static void Copy_Bfx(BE& lhs, const amrex::MultiFab& rhs) {
+      amrex::MultiFab::Copy(lhs.m_B_fx, rhs, 0, 0, 1, rhs.nGrow());
    }
-   void Copy_Bfy(BE& lhs, const amrex::MultiFab& rhs) {
-      amrex::MultiFab::Copy(lhs.B_fy, rhs, 0, 0, 1, rhs.nGrow());
+   static void Copy_Bfy(BE& lhs, const amrex::MultiFab& rhs) {
+      amrex::MultiFab::Copy(lhs.m_B_fy, rhs, 0, 0, 1, rhs.nGrow());
    }
-   void Copy_Bfz(BE& lhs, const amrex::MultiFab& rhs) {
-      amrex::MultiFab::Copy(lhs.B_fz, rhs, 0, 0, 1, rhs.nGrow());
+   static void Copy_Bfz(BE& lhs, const amrex::MultiFab& rhs) {
+      amrex::MultiFab::Copy(lhs.m_B_fz, rhs, 0, 0, 1, rhs.nGrow());
    }
-   void Copy_En(BE& lhs, const amrex::MultiFab& rhs) {
-      amrex::MultiFab::Copy(lhs.E_n, rhs, 0, 0, 3, rhs.nGrow());
+   static void Copy_En(BE& lhs, const amrex::MultiFab& rhs) {
+      amrex::MultiFab::Copy(lhs.m_E_n, rhs, 0, 0, 3, rhs.nGrow());
    }
 
-   void Copy_Bfx(BE& lhs, const amrex::MultiFab& rhs, int nghost) {
-      amrex::MultiFab::Copy(lhs.B_fx, rhs, 0, 0, 1, nghost);
+   static void Copy_Bfx(BE& lhs, const amrex::MultiFab& rhs, int nghost) {
+      amrex::MultiFab::Copy(lhs.m_B_fx, rhs, 0, 0, 1, nghost);
    }
-   void Copy_Bfy(BE& lhs, const amrex::MultiFab& rhs, int nghost) {
-      amrex::MultiFab::Copy(lhs.B_fy, rhs, 0, 0, 1, nghost);
+   static void Copy_Bfy(BE& lhs, const amrex::MultiFab& rhs, int nghost) {
+      amrex::MultiFab::Copy(lhs.m_B_fy, rhs, 0, 0, 1, nghost);
    }
-   void Copy_Bfz(BE& lhs, const amrex::MultiFab& rhs, int nghost) {
-      amrex::MultiFab::Copy(lhs.B_fz, rhs, 0, 0, 1, nghost);
+   static void Copy_Bfz(BE& lhs, const amrex::MultiFab& rhs, int nghost) {
+      amrex::MultiFab::Copy(lhs.m_B_fz, rhs, 0, 0, 1, nghost);
    }
-   void Copy_En(BE& lhs, const amrex::MultiFab& rhs, int nghost) {
-      amrex::MultiFab::Copy(lhs.E_n, rhs, 0, 0, 3, nghost);
-   }
-   
-   void Copy(BE& lhs, const BE& rhs) {
-      BE::Copy_Bfx(lhs, rhs.B_fx);
-      BE::Copy_Bfy(lhs, rhs.B_fy);
-      BE::Copy_Bfz(lhs, rhs.B_fz);
-      BE::Copy_En(lhs, rhs.E_n);
+   static void Copy_En(BE& lhs, const amrex::MultiFab& rhs, int nghost) {
+      amrex::MultiFab::Copy(lhs.m_E_n, rhs, 0, 0, 3, nghost);
    }
    
-   void Copy(BE& lhs, const BE& rhs, int nghost) {
-      BE::Copy_Bfx(lhs, rhs.B_fx, nghost);
-      BE::Copy_Bfy(lhs, rhs.B_fy, nghost);
-      BE::Copy_Bfz(lhs, rhs.B_fz, nghost);
-      BE::Copy_En(lhs, rhs.E_n, nghost);
+   static void Copy(BE& lhs, const BE& rhs) {
+      BE::Copy_Bfx(lhs, rhs.m_B_fx);
+      BE::Copy_Bfy(lhs, rhs.m_B_fy);
+      BE::Copy_Bfz(lhs, rhs.m_B_fz);
+      BE::Copy_En(lhs, rhs.m_E_n);
+   }
+   
+   static void Copy(BE& lhs, const BE& rhs, int nghost) {
+      BE::Copy_Bfx(lhs, rhs.m_B_fx, nghost);
+      BE::Copy_Bfy(lhs, rhs.m_B_fy, nghost);
+      BE::Copy_Bfz(lhs, rhs.m_B_fz, nghost);
+      BE::Copy_En(lhs, rhs.m_E_n, nghost);
    }
 
    void apply_BCs() {
-      B_fx.FillBoundary(period);
-      B_fy.FillBoundary(period);
-      B_fz.FillBoundary(period);
-      E_n.FillBoundary(period);
+      m_B_fx.FillBoundary(m_period);
+      m_B_fy.FillBoundary(m_period);
+      m_B_fz.FillBoundary(m_period);
+      m_E_n.FillBoundary(m_period);
    }
    
-   amrex::Real dotProduct(const BE& v1, const BE& v2) const {
-      amrex::Real dot_Bfx = amrex::MultiFab::Dot(v1.B_fx, 0, v2.B_fx, 0, 1, v1.nGrow_Bfx());
-      amrex::Real dot_Bfy = amrex::MultiFab::Dot(v1.B_fy, 0, v2.B_fy, 0, 1, v1.nGrow_Bfy());
-      amrex::Real dot_Bfz = amrex::MultiFab::Dot(v1.B_fz, 0, v2.B_fz, 0, 1, v1.nGrow_Bfz());
-      amrex::Real dot_En = amrex::MultiFab::Dot(v1.E_n, 0, v2.E_n, 0, 3, v1.nGrow_En());
+   static amrex::Real dotProduct(const BE& v1, const BE& v2) {
+      amrex::Real dot_Bfx = amrex::MultiFab::Dot(v1.m_B_fx, 0, v2.m_B_fx, 0, 1, v1.nGrow_Bfx());
+      amrex::Real dot_Bfy = amrex::MultiFab::Dot(v1.m_B_fy, 0, v2.m_B_fy, 0, 1, v1.nGrow_Bfy());
+      amrex::Real dot_Bfz = amrex::MultiFab::Dot(v1.m_B_fz, 0, v2.m_B_fz, 0, 1, v1.nGrow_Bfz());
+      amrex::Real dot_En = amrex::MultiFab::Dot(v1.m_E_n, 0, v2.m_E_n, 0, 3, v1.nGrow_En());
       
       // Rescale B and E with mu0 and eps0 to avoid bias
       return (dot_Bfx + dot_Bfy + dot_Bfz)/PhysConst::mu0 + dot_En*PhysConst::eps0;
    }
 
-   amrex::Real dotProduct(const BE& v1, const BE& v2, int nghost) const {
-      amrex::Real dot_Bfx = amrex::MultiFab::Dot(v1.B_fx, 0, v2.B_fx, 0, 1, nghost);
-      amrex::Real dot_Bfy = amrex::MultiFab::Dot(v1.B_fy, 0, v2.B_fy, 0, 1, nghost);
-      amrex::Real dot_Bfz = amrex::MultiFab::Dot(v1.B_fz, 0, v2.B_fz, 0, 1, nghost);
-      amrex::Real dot_En = amrex::MultiFab::Dot(v1.E_n, 0, v2.E_n, 0, 3, nghost);
+   static amrex::Real dotProduct(const BE& v1, const BE& v2, int nghost) {
+      amrex::Real dot_Bfx = amrex::MultiFab::Dot(v1.m_B_fx, 0, v2.m_B_fx, 0, 1, nghost);
+      amrex::Real dot_Bfy = amrex::MultiFab::Dot(v1.m_B_fy, 0, v2.m_B_fy, 0, 1, nghost);
+      amrex::Real dot_Bfz = amrex::MultiFab::Dot(v1.m_B_fz, 0, v2.m_B_fz, 0, 1, nghost);
+      amrex::Real dot_En = amrex::MultiFab::Dot(v1.m_E_n, 0, v2.m_E_n, 0, 3, nghost);
       
       // Rescale B and E with mu0 and eps0 to avoid bias
       return (dot_Bfx + dot_Bfy + dot_Bfz)/PhysConst::mu0 + dot_En*PhysConst::eps0;
    }
 
-   void Saxpy_Bfx(BE& lhs, const amrex::MultiFab& rhs_Bfx, amrex::Real a = 1) {
-      amrex::MultiFab::Saxpy(lhs.B_fx, a, rhs_Bfx, 0, 0, 1, rhs_Bfx.nGrow());
+   static void Saxpy_Bfx(BE& lhs, const amrex::MultiFab& rhs_Bfx, amrex::Real a = 1) {
+      amrex::MultiFab::Saxpy(lhs.m_B_fx, a, rhs_Bfx, 0, 0, 1, rhs_Bfx.nGrow());
    }
-   void Saxpy_Bfy(BE& lhs, const amrex::MultiFab& rhs_Bfy, amrex::Real a = 1) {
-      amrex::MultiFab::Saxpy(lhs.B_fy, a, rhs_Bfy, 0, 0, 1, rhs_Bfy.nGrow());
+   static void Saxpy_Bfy(BE& lhs, const amrex::MultiFab& rhs_Bfy, amrex::Real a = 1) {
+      amrex::MultiFab::Saxpy(lhs.m_B_fy, a, rhs_Bfy, 0, 0, 1, rhs_Bfy.nGrow());
    }
-   void Saxpy_Bfz(BE& lhs, const amrex::MultiFab& rhs_Bfz, amrex::Real a = 1) {
-      amrex::MultiFab::Saxpy(lhs.B_fz, a, rhs_Bfz, 0, 0, 1, rhs_Bfz.nGrow());
+   static void Saxpy_Bfz(BE& lhs, const amrex::MultiFab& rhs_Bfz, amrex::Real a = 1) {
+      amrex::MultiFab::Saxpy(lhs.m_B_fz, a, rhs_Bfz, 0, 0, 1, rhs_Bfz.nGrow());
    }
-   void Saxpy_En(BE& lhs, const amrex::MultiFab& rhs_En, amrex::Real a = 1) {
-      amrex::MultiFab::Saxpy(lhs.E_n, a, rhs_En, 0, 0, 3, rhs_En.nGrow());
+   static void Saxpy_En(BE& lhs, const amrex::MultiFab& rhs_En, amrex::Real a = 1) {
+      amrex::MultiFab::Saxpy(lhs.m_E_n, a, rhs_En, 0, 0, 3, rhs_En.nGrow());
    }
    // Add all B fields at once
-   void Saxpy_B(BE& lhs, const std::array<amrex::MultiFab,3>& rhs_B, amrex::Real a = 1) {
-      BE::Saxpy_Bfx(lhs, rhs_B[0], a);
-      BE::Saxpy_Bfy(lhs, rhs_B[1], a);
-      BE::Saxpy_Bfz(lhs, rhs_B[2], a);
+   static void Saxpy_B(BE& lhs, const std::array<amrex::MultiFab,3>& B_f, amrex::Real a = 1) {
+      BE::Saxpy_Bfx(lhs, B_f[0], a);
+      BE::Saxpy_Bfy(lhs, B_f[1], a);
+      BE::Saxpy_Bfz(lhs, B_f[2], a);
    }
    
-   void Saxpy(BE& lhs, const BE& rhs, amrex::Real a = 1) {
-      BE::Saxpy_Bfx(lhs, rhs.B_fx, a);
-      BE::Saxpy_Bfy(lhs, rhs.B_fy, a);
-      BE::Saxpy_Bfz(lhs, rhs.B_fz, a);
-      BE::Saxpy_En(lhs, rhs.E_n, a);
+   static void Saxpy(BE& lhs, const BE& rhs, amrex::Real a = 1) {
+      BE::Saxpy_Bfx(lhs, rhs.m_B_fx, a);
+      BE::Saxpy_Bfy(lhs, rhs.m_B_fy, a);
+      BE::Saxpy_Bfz(lhs, rhs.m_B_fz, a);
+      BE::Saxpy_En(lhs, rhs.m_E_n, a);
    }
 
-   void linComb_Bfx(BE& lhs, amrex::Real a, const amrex::MultiFab& rhs_a_Bfx, amrex::Real b, const amrex::MultiFab& rhs_b_Bfx) {
-      amrex::MultiFab::LinComb(lhs.B_fx, a, rhs_a_Bfx, 0, b, rhs_b_Bfx, 0, 0, 1, rhs_a_Bfx.nGrow());
+   static void linComb_Bfx(BE& lhs, amrex::Real a, const amrex::MultiFab& rhs_a_Bfx, amrex::Real b, const amrex::MultiFab& rhs_b_Bfx) {
+      amrex::MultiFab::LinComb(lhs.m_B_fx, a, rhs_a_Bfx, 0, b, rhs_b_Bfx, 0, 0, 1, rhs_a_Bfx.nGrow());
    }
-   void linComb_Bfy(BE& lhs, amrex::Real a, const amrex::MultiFab& rhs_a_Bfy, amrex::Real b, const amrex::MultiFab& rhs_b_Bfy) {
-      amrex::MultiFab::LinComb(lhs.B_fy, a, rhs_a_Bfy, 0, b, rhs_b_Bfy, 0, 0, 1, rhs_a_Bfy.nGrow());
+   static void linComb_Bfy(BE& lhs, amrex::Real a, const amrex::MultiFab& rhs_a_Bfy, amrex::Real b, const amrex::MultiFab& rhs_b_Bfy) {
+      amrex::MultiFab::LinComb(lhs.m_B_fy, a, rhs_a_Bfy, 0, b, rhs_b_Bfy, 0, 0, 1, rhs_a_Bfy.nGrow());
    }
-   void linComb_Bfz(BE& lhs, amrex::Real a, const amrex::MultiFab& rhs_a_Bfz, amrex::Real b, const amrex::MultiFab& rhs_b_Bfz) {
-      amrex::MultiFab::LinComb(lhs.B_fz, a, rhs_a_Bfz, 0, b, rhs_b_Bfz, 0, 0, 1, rhs_a_Bfz.nGrow());
+   static void linComb_Bfz(BE& lhs, amrex::Real a, const amrex::MultiFab& rhs_a_Bfz, amrex::Real b, const amrex::MultiFab& rhs_b_Bfz) {
+      amrex::MultiFab::LinComb(lhs.m_B_fz, a, rhs_a_Bfz, 0, b, rhs_b_Bfz, 0, 0, 1, rhs_a_Bfz.nGrow());
    }
-   void linComb_En(BE& lhs, amrex::Real a, const amrex::MultiFab& rhs_a_En, amrex::Real b, const amrex::MultiFab& rhs_b_En) {
-      amrex::MultiFab::LinComb(lhs.E_n, a, rhs_a_En, 0, b, rhs_b_En, 0, 0, 3, rhs_a_En.nGrow());
+   static void linComb_En(BE& lhs, amrex::Real a, const amrex::MultiFab& rhs_a_En, amrex::Real b, const amrex::MultiFab& rhs_b_En) {
+      amrex::MultiFab::LinComb(lhs.m_E_n, a, rhs_a_En, 0, b, rhs_b_En, 0, 0, 3, rhs_a_En.nGrow());
    }
    
-   void linComb(BE& lhs, amrex::Real a, const BE& rhs_a, amrex::Real b, const BE& rhs_b) {
-      BE::linComb_Bfx(lhs, a, rhs_a.B_fx, b, rhs_b.B_fx);
-      BE::linComb_Bfy(lhs, a, rhs_a.B_fy, b, rhs_b.B_fy);
-      BE::linComb_Bfz(lhs, a, rhs_a.B_fz, b, rhs_b.B_fz);
-      BE::linComb_En(lhs, a, rhs_a.E_n, b, rhs_b.E_n);
+   static void linComb(BE& lhs, amrex::Real a, const BE& rhs_a, amrex::Real b, const BE& rhs_b) {
+      BE::linComb_Bfx(lhs, a, rhs_a.m_B_fx, b, rhs_b.m_B_fx);
+      BE::linComb_Bfy(lhs, a, rhs_a.m_B_fy, b, rhs_b.m_B_fy);
+      BE::linComb_Bfz(lhs, a, rhs_a.m_B_fz, b, rhs_b.m_B_fz);
+      BE::linComb_En(lhs, a, rhs_a.m_E_n, b, rhs_b.m_E_n);
    }
 
    amrex::Real norm2() const {
@@ -210,55 +216,55 @@ public:
    }
 
    void mult(amrex::Real fac) {
-      B_fx.mult(fac);
-      B_fy.mult(fac);
-      B_fz.mult(fac);
-      E_n.mult(fac);
+      m_B_fx.mult(fac);
+      m_B_fy.mult(fac);
+      m_B_fz.mult(fac);
+      m_E_n.mult(fac);
    }
    
    void setVal(amrex::Real val) {
-      B_fx.setVal(val);
-      B_fy.setVal(val);
-      B_fz.setVal(val);
-      E_n.setVal(val);
+      m_B_fx.setVal(val);
+      m_B_fy.setVal(val);
+      m_B_fz.setVal(val);
+      m_E_n.setVal(val);
    }
 };
 
 class linop {
 private:
    // BoxArray here has no ghost cells
-   amrex::BoxArray ba;
-   amrex::DistributionMapping dm;
-   int nghost;
-   amrex::GpuArray<amrex::Real,3> dx;
-   amrex::Real tFactor; // time step factor, dt*theta
-   amrex::Periodicity period;
+   amrex::BoxArray m_ba;
+   amrex::DistributionMapping m_dm;
+   int m_nghost;
+   amrex::GpuArray<amrex::Real,3> m_dx;
+   amrex::Real m_tFactor; // time step factor, dt*theta
+   amrex::Periodicity m_period;
 public:
    using RT = amrex::Real;
    
-   linop(const amrex::BoxArray& input_ba, const amrex::DistributionMapping& input_dm, int input_nghost, const amrex::GpuArray<RT,3>& input_dx, RT input_tFactor, const amrex::Periodicity& input_period) {
-      ba = input_ba;
-      dm = input_dm;
-      nghost = input_nghost;
-      dx = input_dx;
-      tFactor = input_tFactor;
-      period = input_period;
+   linop(const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, int nghost, const amrex::GpuArray<RT,3>& dx, RT tFactor, const amrex::Periodicity& period) {
+      m_ba = convert(ba,AMReXConst::btype_c);
+      m_dm = dm;
+      m_nghost = nghost;
+      m_dx = dx;
+      m_tFactor = tFactor;
+      m_period = period;
    }
    
-   void setBoxArray(const amrex::BoxArray& input_ba) {
-      ba = input_ba;
+   void setBoxArray(const amrex::BoxArray& ba) {
+      m_ba = convert(ba,AMReXConst::btype_c);
    }
-   void setDistributionMapping(const amrex::DistributionMapping& input_dm) {
-      dm = input_dm;
+   void setDistributionMapping(const amrex::DistributionMapping& dm) {
+      m_dm = dm;
    }
-   void setNGhost(int input_nghost) {
-      nghost = input_nghost;
+   void setNGhost(int nghost) {
+      m_nghost = nghost;
    }
-   void setDx(const amrex::GpuArray<RT,3>& input_dx) {
-      dx = input_dx;
+   void setDx(const amrex::GpuArray<RT,3>& dx) {
+      m_dx = dx;
    }
-   void setTFactor(RT input_tFactor) {
-      tFactor = input_tFactor;
+   void setTFactor(RT tFactor) {
+      m_tFactor = tFactor;
    }
    
    // Actual operator matrix product, i.e. x input, Ax output
@@ -271,64 +277,64 @@ public:
          amrex::MultiFab(convert(x.getE_n().boxArray(),AMReXConst::btype_fz),x.getE_n().distributionMap, 1, 0)
       };
       
-      Ax.Copy(Ax,x,0);
+      BE::Copy(Ax,x,0);
 
       BL_PROFILE_VAR("gmres_curl_En()",TIMER_curl_En);
-      curl_n2f(curl_En, x.getE_n(), this->dx);
+      curl_n2f(curl_En, x.getE_n(), m_dx);
       BL_PROFILE_VAR_STOP(TIMER_curl_En);
       BL_PROFILE_VAR("gmres_curl_Bf()",TIMER_curl_Bf);
-      curl_f2n(curl_Bf, x.getB_fx(), x.getB_fy(), x.getB_fz(), this->dx);
+      curl_f2n(curl_Bf, x.getB_fx(), x.getB_fy(), x.getB_fz(), m_dx);
       BL_PROFILE_VAR_STOP(TIMER_curl_Bf);
       
-      Ax.Saxpy_B(Ax, curl_En, this->tFactor);
-      Ax.Saxpy_En(Ax, curl_Bf, -this->tFactor*math::square(PhysConst::c));
+      Ax.Saxpy_B(Ax, curl_En, m_tFactor);
+      Ax.Saxpy_En(Ax, curl_Bf, -m_tFactor*math::square(PhysConst::c));
    }
    
    // Assign lhs = rhs
-   void assign(BE& lhs, const BE& rhs) {
-      lhs.Copy(lhs,rhs);
+   static void assign(BE& lhs, const BE& rhs) {
+      BE::Copy(lhs,rhs);
       lhs.apply_BCs();
    }
    
    // Dot product of v1 and v2
-   RT dotProduct(const BE& v1, const BE& v2) {
-      return v1.dotProduct(v1,v2);
+   static RT dotProduct(const BE& v1, const BE& v2) {
+      return BE::dotProduct(v1,v2);
    }
    
    // lhs += a*rhs
-   void increment(BE& lhs, const BE& rhs, RT a) {
+   static void increment(BE& lhs, const BE& rhs, RT a) {
       lhs.Saxpy(lhs,rhs,a);
       lhs.apply_BCs();
    }
    
    // lhs = a*rhs_a + b*rhs_b
-   void linComb(BE& lhs, RT a, const BE& rhs_a, RT b, const BE& rhs_b) {
-      lhs.linComb(lhs,a,rhs_a,b,rhs_b);
+   static void linComb(BE& lhs, RT a, const BE& rhs_a, RT b, const BE& rhs_b) {
+      BE::linComb(lhs,a,rhs_a,b,rhs_b);
       lhs.apply_BCs();
    }
    
    // Return new vector suitable for rhs of Ax = b (i.e. b)
-   BE makeVecRHS() { return BE(ba,dm,0,period); }
+   BE makeVecRHS() { return BE(m_ba,m_dm,0,m_period); }
    
    // Return new vector suitable for lhs of Ax = b (i.e. x)
-   BE makeVecLHS() { return BE(ba,dm,nghost,period); }
+   BE makeVecLHS() { return BE(m_ba,m_dm,m_nghost,m_period); }
    
    // 2-norm of v
-   RT norm2(const BE& v) { return v.norm2(); }
+   static RT norm2(const BE& v) { return v.norm2(); }
    
    // Apply right preconditioning, i.e. solve P(lhs) = rhs for preconditioning P
    // P should be an approximation for A
    // for now we use identity, could use A without particles
-   void precond(BE& lhs, const BE& rhs) {
-      lhs.Copy(lhs,rhs,0);
+   static void precond(BE& lhs, const BE& rhs) {
+      BE::Copy(lhs,rhs,0);
       lhs.apply_BCs();
    }
    
    // Multiply vector v by factor fac
-   void scale(BE& v, RT fac) { v.mult(fac); }
+   static void scale(BE& v, RT fac) { v.mult(fac); }
    
    // Set vector to zero
-   void setToZero(BE& v) { v.setVal(0.0); }
+   static void setToZero(BE& v) { v.setVal(0.0); }
    
 };
 
