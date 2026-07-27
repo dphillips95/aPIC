@@ -59,13 +59,13 @@ void gmres_step(std::array<MultiFab,3>& B_f, MultiFab& E_n, GpuArray<Real,3> dx,
 
    // State vector (lhs); initial state is start of time step
    
-   x.Copy_Bfx(x, B_f[0]);
-   x.Copy_Bfy(x, B_f[1]);
-   x.Copy_Bfz(x, B_f[2]);
-   x.Copy_En(x, E_n);
+   BE::Copy_Bfx(x, B_f[0]);
+   BE::Copy_Bfy(x, B_f[1]);
+   BE::Copy_Bfz(x, B_f[2]);
+   BE::Copy_En(x, E_n);
    
    // rhs; first includes initial B and E so copy x without ghost cells
-   b.Copy(b, x, 0);
+   BE::Copy(b, x, 0);
    
    // Calculate curls of initial state; no ghost cells needed
    curl_n2f(curl_En, E_n, dx);
