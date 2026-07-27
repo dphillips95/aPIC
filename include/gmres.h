@@ -30,6 +30,7 @@ Author(s): David Phillips
 
 #include <cmath>
 
+#include <matrix.h>
 #include <constants.h>
 #include <operators.h>
 #include <math_functions.h>
@@ -333,5 +334,12 @@ public:
 };
 
 void gmres_step(std::array<amrex::MultiFab,3>& B_f, amrex::MultiFab& E_n, amrex::GpuArray<amrex::Real,3> dx, amrex::Real dt, amrex::Real theta, amrex::Periodicity period, amrex::Real rtol, amrex::Real atol);
+
+matrix<amrex::Real> get_curl_f2n_operator(const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx);
+matrix<amrex::Real> get_curl_n2f_operator(const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx);
+
+int get_cellID(const amrex::IntVect& cell_indices, const amrex::IntVect& len);
+int get_cellID(const std::array<int,3>& cell_indices, const amrex::IntVect& len);
+amrex::IntVect get_cell_indices(int cellID, const amrex::IntVect& len);
 
 #endif
