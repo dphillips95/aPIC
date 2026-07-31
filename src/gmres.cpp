@@ -36,7 +36,7 @@ Author(s): David Phillips
 using namespace amrex;
 
 // Advance B and E fields by solving gmres system
-void gmres_step(std::array<MultiFab,3>& B_f, MultiFab& E_n, GpuArray<Real,3> dx, Real dt, Real theta, Periodicity period, Real rtol, Real atol) {
+void gmres_step(std::array<MultiFab,3>& B_f, MultiFab& E_n, GpuArray<Real,3> dx, Real dt, Real theta, Periodicity period, Real rtol, Real atol, int verbosity) {
    BL_PROFILE("gmres_step()");
    
    // To prevent reallocation every step, state vector BE and curl results are pre-allocated static
@@ -79,7 +79,7 @@ void gmres_step(std::array<MultiFab,3>& B_f, MultiFab& E_n, GpuArray<Real,3> dx,
    GMRES<BE,linop> gmres_solver;
    
    gmres_solver.define(gmres_operator);
-   gmres_solver.setVerbose(1);
+   gmres_solver.setVerbose(verbosity);
    gmres_solver.solve(x, b, rtol, atol);
    
    int gmres_status = gmres_solver.getStatus();
@@ -92,12 +92,13 @@ void gmres_step(std::array<MultiFab,3>& B_f, MultiFab& E_n, GpuArray<Real,3> dx,
       Print() << "GMRES Iteration count: " << gmres_solver.getNumIters() << std::endl;
    }
    
-   MultiFab::Copy(B_f[0], x.getB_fx(), 0, 0, 1, x.nGrow_Bfx());
-   MultiFab::Copy(B_f[1], x.getB_fy(), 0, 0, 1, x.nGrow_Bfy());
-   MultiFab::Copy(B_f[2], x.getB_fz(), 0, 0, 1, x.nGrow_Bfz());
-   MultiFab::Copy(E_n, x.getE_n(), 0, 0, 3, x.nGrow_En());
+   MultiFab::Copy(B_f[0], x.getB_fx_const(), 0, 0, 1, x.nghost());
+   MultiFab::Copy(B_f[1], x.getB_fy_const(), 0, 0, 1, x.nghost());
+   MultiFab::Copy(B_f[2], x.getB_fz_const(), 0, 0, 1, x.nghost());
+   MultiFab::Copy(E_n, x.getE_n_const(), 0, 0, 3, x.nghost());
 }
 
+/*
 // Compute the curl operator for a given box from faces to nodes
 // This function only needs to be computed once per box so speed is not that important
 // NB: The box passed should not contain ghost cells
@@ -116,11 +117,11 @@ matrix<Real> get_curl_f2n_operator(const Box& bx, const int nghost, const GpuArr
       len_n = bx_n.length();
    
    const int
-      total_fx = len_fx[0]*len_fx[1]*len_fx[2],
-      total_fy = len_fy[0]*len_fy[1]*len_fy[2],
-      total_fz = len_fz[0]*len_fz[1]*len_fz[2],
+      total_fx = math::product(len_fx),
+      total_fy = math::product(len_fy),
+      total_fz = math::product(len_fz),
       total_fxy = total_fx + total_fy,
-      total_n = len_n[0]*len_n[1]*len_n[2];
+      total_n = math::product(len_n);
    
    matrix<Real> ret(3*total_n, total_fx + total_fy + total_fz, 0.0);
    
@@ -205,11 +206,11 @@ matrix<Real> get_curl_n2f_operator(const Box& bx, const int nghost, const GpuArr
       len_n = bx_n.length();
    
    const int
-      total_fx = len_fx[0]*len_fx[1]*len_fx[2],
-      total_fy = len_fy[0]*len_fy[1]*len_fy[2],
-      total_fz = len_fz[0]*len_fz[1]*len_fz[2],
+      total_fx = math::product(len_fx),
+      total_fy = math::product(len_fy),
+      total_fz = math::product(len_fz),
       total_fxy = total_fx + total_fy,
-      total_n = len_n[0]*len_n[1]*len_n[2];
+      total_n = math::product(len_n);
    
    matrix<Real> ret(total_fx + total_fy + total_fz, 3*total_n, 0.0);
    
@@ -302,27 +303,678 @@ matrix<Real> get_curl_n2f_operator(const Box& bx, const int nghost, const GpuArr
    
    return ret;
 }
+*/
+
+// Compute the curl operator for a given box from faces to nodes
+// This function only needs to be computed once per box so speed is not that important
+// This function returns three separate matrices for the three components of B_f in the input x of Ax
+// NB: The box passed should not contain ghost cells
+std::array<matrix<Real>,3> get_curl_f2n_operator(const Box& bx, const int nghost, const GpuArray<Real,3>& dx) {
+
+   const Real
+      grad_x = 1/(2*dx[0]),
+      grad_y = 1/(2*dx[1]),
+      grad_z = 1/(2*dx[2]);
+   
+   const Box&
+      bx_fx = grow(convert(bx,AMReXConst::btype_fx), nghost),
+      bx_fy = grow(convert(bx,AMReXConst::btype_fy), nghost),
+      bx_fz = grow(convert(bx,AMReXConst::btype_fz), nghost),
+      bx_n = convert(bx,AMReXConst::btype_n);
+   
+   const IntVect
+      len_fx = bx_fx.length(),
+      len_fy = bx_fy.length(),
+      len_fz = bx_fz.length(),
+      len_n = bx_n.length();
+   
+   const int
+      total_fx = math::product(len_fx),
+      total_fy = math::product(len_fy),
+      total_fz = math::product(len_fz),
+      total_n = math::product(len_n);
+   
+   std::array<matrix<Real>,3> ret = {
+      matrix<Real>(3*total_n, total_fx, 0.0),
+      matrix<Real>(3*total_n, total_fy, 0.0),
+      matrix<Real>(3*total_n, total_fz, 0.0)
+   };
+   
+   ParallelFor(bx_n, [&](int ii, int jj, int kk) {
+      // Coords of node and adjacent faces
+      const IntVect
+         cell_000(ii,     jj,     kk    ),
+         cell_001(ii,     jj,     kk - 1),
+         cell_010(ii,     jj - 1, kk    ),
+         cell_011(ii,     jj - 1, kk - 1),
+         cell_100(ii - 1, jj,     kk    ),
+         cell_101(ii - 1, jj,     kk - 1),
+         cell_110(ii - 1, jj - 1, kk    );
+      
+      // Find column in matrix for each face
+      // Each face box has different dimensions, and
+      // Matrix columns are organised as x-faces first then y- and z-
+      // Rows are organised instead as all three components at each node together
+      const int
+         // Node ID
+         nxID_000 = get_cellID(cell_000, len_n),
+         nyID_000 = nxID_000 + total_n,
+         nzID_000 = nyID_000 + total_n,
+         // x-face IDs
+         fxID_000 = get_cellID(cell_000, len_fx, nghost),
+         fxID_001 = get_cellID(cell_001, len_fx, nghost),
+         fxID_010 = get_cellID(cell_010, len_fx, nghost),
+         fxID_011 = get_cellID(cell_011, len_fx, nghost),
+         // y-face IDs
+         fyID_000 = get_cellID(cell_000, len_fy, nghost),
+         fyID_001 = get_cellID(cell_001, len_fy, nghost),
+         fyID_100 = get_cellID(cell_100, len_fy, nghost),
+         fyID_101 = get_cellID(cell_101, len_fy, nghost),
+         // z-face IDs
+         fzID_000 = get_cellID(cell_000, len_fz, nghost),
+         fzID_010 = get_cellID(cell_010, len_fz, nghost),
+         fzID_100 = get_cellID(cell_100, len_fz, nghost),
+         fzID_110 = get_cellID(cell_110, len_fz, nghost);
+      
+      // x-component of curl
+      ret[1](nxID_000, fyID_101) += grad_z;
+      ret[1](nxID_000, fyID_100) -= grad_z;
+      ret[2](nxID_000, fzID_100) += grad_y;
+      ret[2](nxID_000, fzID_110) -= grad_y;
+      ret[1](nxID_000, fyID_001) += grad_z;
+      ret[1](nxID_000, fyID_000) -= grad_z;
+      ret[2](nxID_000, fzID_000) += grad_y;
+      ret[2](nxID_000, fzID_010) -= grad_y;
+      // y-component of curl
+      ret[2](nyID_000, fzID_110) += grad_x;
+      ret[2](nyID_000, fzID_010) -= grad_x;
+      ret[0](nyID_000, fxID_010) += grad_z;
+      ret[0](nyID_000, fxID_011) -= grad_z;
+      ret[2](nyID_000, fzID_100) += grad_x;
+      ret[2](nyID_000, fzID_000) -= grad_x;
+      ret[0](nyID_000, fxID_000) += grad_z;
+      ret[0](nyID_000, fxID_001) -= grad_z;
+      // z-component of curl
+      ret[0](nzID_000, fxID_011) += grad_y;
+      ret[0](nzID_000, fxID_001) -= grad_y;
+      ret[1](nzID_000, fyID_001) += grad_x;
+      ret[1](nzID_000, fyID_101) -= grad_x;
+      ret[0](nzID_000, fxID_010) += grad_y;
+      ret[0](nzID_000, fxID_000) -= grad_y;
+      ret[1](nzID_000, fyID_000) += grad_x;
+      ret[1](nzID_000, fyID_100) -= grad_x;
+   });
+   
+   return ret;
+}
+
+// Compute the curl operator for a given box from nodes to faces
+// This function only needs to be computed once per box so speed is not that important
+// NB: The box passed should not contain ghost cells
+std::array<matrix<Real>,3> get_curl_n2f_operator(const Box& bx, const int nghost, const GpuArray<Real,3>& dx) {
+
+   const Real
+      grad_x = 1/(2*dx[0]),
+      grad_y = 1/(2*dx[1]),
+      grad_z = 1/(2*dx[2]);
+   
+   const Box&
+      bx_fx = convert(bx,AMReXConst::btype_fx),
+      bx_fy = convert(bx,AMReXConst::btype_fy),
+      bx_fz = convert(bx,AMReXConst::btype_fz),
+      bx_n = grow(convert(bx,AMReXConst::btype_n), nghost);
+   
+   const IntVect
+      len_fx = bx_fx.length(),
+      len_fy = bx_fy.length(),
+      len_fz = bx_fz.length(),
+      len_n = bx_n.length();
+   
+   const int
+      total_fx = math::product(len_fx),
+      total_fy = math::product(len_fy),
+      total_fz = math::product(len_fz),
+      total_n = math::product(len_n);
+   
+   std::array<matrix<Real>,3> ret = {
+      matrix<Real>(total_fx, 3*total_n, 0.0),
+      matrix<Real>(total_fy, 3*total_n, 0.0),
+      matrix<Real>(total_fz, 3*total_n, 0.0)
+   };
+   
+   ParallelFor(bx_fx, [&](int ii, int jj, int kk) {
+      const IntVect
+         cell_000(ii,   jj,   kk  ),
+         cell_001(ii,   jj,   kk+1),
+         cell_010(ii,   jj+1, kk  ),
+         cell_011(ii,   jj+1, kk+1);
+      // Find column in matrix for each node
+      // Each face box has different dimensions, and
+      // Matrix rows are organised as x-faces first then y- and z-
+      // Columns are organised instead as all three components at each node together
+      const int
+         // x-face ID
+         fxID_000 = get_cellID(cell_000, len_fx),
+         // node IDs
+         nyID_000 = get_cellID(cell_000, len_n, nghost) + total_n,
+         nyID_001 = get_cellID(cell_001, len_n, nghost) + total_n,
+         nyID_010 = get_cellID(cell_010, len_n, nghost) + total_n,
+         nyID_011 = get_cellID(cell_011, len_n, nghost) + total_n,
+         nzID_000 = nyID_000 + total_n,
+         nzID_001 = nyID_001 + total_n,
+         nzID_010 = nyID_010 + total_n,
+         nzID_011 = nyID_011 + total_n;
+         
+      ret[0](fxID_000, nyID_000) += grad_z;
+      ret[0](fxID_000, nyID_010) += grad_z;
+      ret[0](fxID_000, nzID_010) += grad_y;
+      ret[0](fxID_000, nzID_011) += grad_y;
+      ret[0](fxID_000, nyID_011) -= grad_z;
+      ret[0](fxID_000, nyID_001) -= grad_z;
+      ret[0](fxID_000, nzID_001) -= grad_y;
+      ret[0](fxID_000, nzID_000) -= grad_y;
+   });
+
+   ParallelFor(bx_fy, [&](int ii, int jj, int kk) {
+      const IntVect
+         cell_000(ii,   jj,   kk  ),
+         cell_001(ii,   jj,   kk+1),
+         cell_100(ii+1, jj,   kk  ),
+         cell_101(ii+1, jj,   kk+1);
+      // Find column in matrix for each node
+      // Each face box has different dimensions, and
+      // Matrix rows are organised as x-faces first then y- and z-
+      // Columns are organised instead as all three components at each node together
+      const int
+         // y-face ID
+         fyID_000 = get_cellID(cell_000, len_fy),
+         // node IDs
+         nxID_000 = get_cellID(cell_000, len_n, nghost),
+         nxID_001 = get_cellID(cell_001, len_n, nghost),
+         nxID_100 = get_cellID(cell_100, len_n, nghost),
+         nxID_101 = get_cellID(cell_101, len_n, nghost),
+         nzID_000 = nxID_000 + 2*total_n,
+         nzID_001 = nxID_001 + 2*total_n,
+         nzID_100 = nxID_100 + 2*total_n,
+         nzID_101 = nxID_101 + 2*total_n;
+      
+      ret[1](fyID_000, nzID_000) += grad_x;
+      ret[1](fyID_000, nzID_001) += grad_x;
+      ret[1](fyID_000, nxID_001) += grad_z;
+      ret[1](fyID_000, nxID_101) += grad_z;
+      ret[1](fyID_000, nzID_101) -= grad_x;
+      ret[1](fyID_000, nzID_100) -= grad_x;
+      ret[1](fyID_000, nxID_100) -= grad_z;
+      ret[1](fyID_000, nxID_000) -= grad_z;
+   });
+   
+   ParallelFor(bx_fz, [&](int ii, int jj, int kk) {
+      const IntVect
+         cell_000(ii,   jj,   kk  ),
+         cell_010(ii,   jj+1, kk  ),
+         cell_100(ii+1, jj,   kk  ),
+         cell_110(ii+1, jj+1, kk  );
+      // Find column in matrix for each node
+      // Each face box has different dimensions, and
+      // Matrix rows are organised as x-faces first then y- and z-
+      // Columns are organised instead as all three components at each node together
+      const int
+         // z-face ID
+         fzID_000 = get_cellID(cell_000, len_fz),
+         // node IDs
+         nxID_000 = get_cellID(cell_000, len_n, nghost),
+         nxID_010 = get_cellID(cell_010, len_n, nghost),
+         nxID_100 = get_cellID(cell_100, len_n, nghost),
+         nxID_110 = get_cellID(cell_110, len_n, nghost),
+         nyID_000 = nxID_000 + total_n,
+         nyID_010 = nxID_010 + total_n,
+         nyID_100 = nxID_100 + total_n,
+         nyID_110 = nxID_110 + total_n;
+      
+      ret[2](fzID_000, nxID_000) += grad_y;
+      ret[2](fzID_000, nxID_100) += grad_y;
+      ret[2](fzID_000, nyID_100) += grad_x;
+      ret[2](fzID_000, nyID_110) += grad_x;
+      ret[2](fzID_000, nxID_110) -= grad_y;
+      ret[2](fzID_000, nxID_010) -= grad_y;
+      ret[2](fzID_000, nyID_010) -= grad_x;
+      ret[2](fzID_000, nyID_000) -= grad_x;
+   });
+   
+   return ret;
+}
+
+// Compute the curl operator for a given box from faces to nodes
+// This function only needs to be computed once per box so speed is not that important
+// This function returns three separate sparse matrices for the three components of B_f in the input x of Ax
+// NB: The box passed should not contain ghost cells
+std::array<sp_matrix<Real>,3> get_curl_f2n_operator_sparse(const Box& bx, const int nghost, const GpuArray<Real,3>& dx) {
+
+   const Real
+      grad_x = 1/(2*dx[0]),
+      grad_y = 1/(2*dx[1]),
+      grad_z = 1/(2*dx[2]);
+   
+   const Box&
+      bx_fx = grow(convert(bx,AMReXConst::btype_fx), nghost),
+      bx_fy = grow(convert(bx,AMReXConst::btype_fy), nghost),
+      bx_fz = grow(convert(bx,AMReXConst::btype_fz), nghost),
+      bx_n = convert(bx,AMReXConst::btype_n);
+   
+   const IntVect
+      len_fx = bx_fx.length(),
+      len_fy = bx_fy.length(),
+      len_fz = bx_fz.length(),
+      len_n = bx_n.length();
+   
+   const int
+      total_fx = math::product(len_fx),
+      total_fy = math::product(len_fy),
+      total_fz = math::product(len_fz),
+      total_n = math::product(len_n);
+
+   // *_xy, first dim "x" indicates component of B (thus different matrices), second dim "y" indicates component of E (thus different chunk of matrix)
+   // These never match as B_i does not affect E_i
+   std::vector<Real>
+      dat_xy,
+      dat_xz,
+      dat_yx,
+      dat_yz,
+      dat_zx,
+      dat_zy;
+
+   std::vector<int>
+      row_indices_xy, col_indices_xy,
+      row_indices_xz, col_indices_xz,
+      row_indices_yx, col_indices_yx,
+      row_indices_yz, col_indices_yz,
+      row_indices_zx, col_indices_zx,
+      row_indices_zy, col_indices_zy;
+     
+   // 4 Entries per row - i.e. for each dimension pair i,j,
+   // 4 values of B_j in neighbouring faces affect the local E_i
+   constexpr int cols_per_row = 4;
+   
+   dat_xy.reserve(cols_per_row*total_n);
+   dat_xz.reserve(cols_per_row*total_n);
+   dat_yx.reserve(cols_per_row*total_n);
+   dat_yz.reserve(cols_per_row*total_n);
+   dat_zx.reserve(cols_per_row*total_n);
+   dat_zy.reserve(cols_per_row*total_n);
+      
+   row_indices_xy.reserve(cols_per_row*total_n);
+   row_indices_zy.reserve(cols_per_row*total_n);
+   row_indices_xz.reserve(cols_per_row*total_n);
+   row_indices_yx.reserve(cols_per_row*total_n);
+   row_indices_yz.reserve(cols_per_row*total_n);
+   row_indices_zx.reserve(cols_per_row*total_n);
+   row_indices_zy.reserve(cols_per_row*total_n);
+      
+   col_indices_xy.reserve(cols_per_row*total_n);
+   col_indices_xz.reserve(cols_per_row*total_n);
+   col_indices_yx.reserve(cols_per_row*total_n);
+   col_indices_yz.reserve(cols_per_row*total_n);
+   col_indices_zx.reserve(cols_per_row*total_n);
+   col_indices_zy.reserve(cols_per_row*total_n);
+   
+   ParallelFor(bx_n, [&](int ii, int jj, int kk) {
+      // Coords of node and adjacent faces
+      const IntVect
+         cell_000(ii,     jj,     kk    ),
+         cell_100(ii - 1, jj,     kk    ),
+         cell_010(ii,     jj - 1, kk    ),
+         cell_110(ii - 1, jj - 1, kk    ),
+         cell_001(ii,     jj,     kk - 1),
+         cell_101(ii - 1, jj,     kk - 1),
+         cell_011(ii,     jj - 1, kk - 1);
+      
+      // Find column in matrix for each face
+      // Each face box has different dimensions, and
+      // Matrix columns are organised as x-faces first then y- and z-
+      // Rows are organised instead as all three components at each node together
+      const int
+         // Node ID
+         nxID_000 = get_cellID(cell_000, len_n),
+         nyID_000 = nxID_000 + total_n,
+         nzID_000 = nyID_000 + total_n,
+         // x-face IDs
+         fxID_000 = get_cellID(cell_000, len_fx, nghost),
+         fxID_010 = get_cellID(cell_010, len_fx, nghost),
+         fxID_001 = get_cellID(cell_001, len_fx, nghost),
+         fxID_011 = get_cellID(cell_011, len_fx, nghost),
+         // y-face IDs
+         fyID_000 = get_cellID(cell_000, len_fy, nghost),
+         fyID_100 = get_cellID(cell_100, len_fy, nghost),
+         fyID_001 = get_cellID(cell_001, len_fy, nghost),
+         fyID_101 = get_cellID(cell_101, len_fy, nghost),
+         // z-face IDs
+         fzID_000 = get_cellID(cell_000, len_fz, nghost),
+         fzID_100 = get_cellID(cell_100, len_fz, nghost),
+         fzID_010 = get_cellID(cell_010, len_fz, nghost),
+         fzID_110 = get_cellID(cell_110, len_fz, nghost);
+      
+      // x-component of curl
+      dat_yx.push_back(grad_z);
+      dat_yx.push_back(grad_z);
+      dat_yx.push_back(-grad_z);
+      dat_yx.push_back(-grad_z);
+      for (int ii=0; ii<4; ++ii) {
+         row_indices_yx.push_back(nxID_000);
+      }
+      col_indices_yx.push_back(fyID_101);
+      col_indices_yx.push_back(fyID_001);
+      col_indices_yx.push_back(fyID_100);
+      col_indices_yx.push_back(fyID_000);
+
+      dat_zx.push_back(-grad_y);
+      dat_zx.push_back(-grad_y);
+      dat_zx.push_back(grad_y);
+      dat_zx.push_back(grad_y);
+      for (int ii=0; ii<4; ++ii) {
+         row_indices_zx.push_back(nxID_000);
+      }
+      col_indices_zx.push_back(fzID_110);
+      col_indices_zx.push_back(fzID_010);
+      col_indices_zx.push_back(fzID_100);
+      col_indices_zx.push_back(fzID_000);
+      
+      // y-component of curl
+      dat_zy.push_back(grad_x);
+      dat_zy.push_back(-grad_x);
+      dat_zy.push_back(grad_x);
+      dat_zy.push_back(-grad_x);
+      for (int ii=0; ii<4; ++ii) {
+         row_indices_zy.push_back(nyID_000);
+      }
+      col_indices_zy.push_back(fzID_110);
+      col_indices_zy.push_back(fzID_010);
+      col_indices_zy.push_back(fzID_100);
+      col_indices_zy.push_back(fzID_000);
+
+      dat_xy.push_back(-grad_z);
+      dat_xy.push_back(-grad_z);
+      dat_xy.push_back(grad_z);
+      dat_xy.push_back(grad_z);
+      for (int ii=0; ii<4; ++ii) {
+         row_indices_xy.push_back(nyID_000);
+      }
+      col_indices_xy.push_back(fxID_011);
+      col_indices_xy.push_back(fxID_001);
+      col_indices_xy.push_back(fxID_010);
+      col_indices_xy.push_back(fxID_000);
+      
+      // z-component of curl
+      dat_xz.push_back(grad_y);
+      dat_xz.push_back(-grad_y);
+      dat_xz.push_back(grad_y);
+      dat_xz.push_back(-grad_y);
+      for (int ii=0; ii<4; ++ii) {
+         row_indices_xz.push_back(nzID_000);
+      }
+      col_indices_xz.push_back(fxID_011);
+      col_indices_xz.push_back(fxID_001);
+      col_indices_xz.push_back(fxID_010);
+      col_indices_xz.push_back(fxID_000);
+
+      dat_yz.push_back(-grad_x);
+      dat_yz.push_back(grad_x);
+      dat_yz.push_back(-grad_x);
+      dat_yz.push_back(grad_x);
+      for (int ii=0; ii<4; ++ii) {
+         row_indices_yz.push_back(nzID_000);
+      }
+      col_indices_zy.push_back(fyID_101);
+      col_indices_yz.push_back(fyID_001);
+      col_indices_yz.push_back(fyID_100);
+      col_indices_yz.push_back(fyID_000);
+   });
+
+   std::array<sp_matrix<Real>,3> ret = {
+      sp_matrix<Real>(3*cols_per_row*total_n, 3*total_n, total_fx),
+      sp_matrix<Real>(3*cols_per_row*total_n, 3*total_n, total_fy),
+      sp_matrix<Real>(3*cols_per_row*total_n, 3*total_n, total_fz)
+   };
+
+   ret[0].add_empty_rows(total_n);
+   ret[1].add_chunk(dat_yx, row_indices_yx, col_indices_yx);
+   ret[2].add_chunk(dat_zx, row_indices_zx, col_indices_zx);
+
+   ret[0].add_chunk(dat_xy, row_indices_xy, col_indices_xy);
+   ret[1].add_empty_rows(total_n);
+   ret[2].add_chunk(dat_zy, row_indices_zy, col_indices_zy);
+   
+   ret[0].add_chunk(dat_xz, row_indices_xz, col_indices_xz);
+   ret[1].add_chunk(dat_yz, row_indices_yz, col_indices_yz);
+   ret[2].add_empty_rows(total_n);
+   
+   return ret;
+}
+
+// Compute the curl operator for a given box from nodes to faces
+// This function only needs to be computed once per box so speed is not that important
+// NB: The box passed should not contain ghost cells
+std::array<sp_matrix<Real>,3> get_curl_n2f_operator_sparse(const Box& bx, const int nghost, const GpuArray<Real,3>& dx) {
+
+   const Real
+      grad_x = 1/(2*dx[0]),
+      grad_y = 1/(2*dx[1]),
+      grad_z = 1/(2*dx[2]);
+   
+   const Box&
+      bx_fx = convert(bx,AMReXConst::btype_fx),
+      bx_fy = convert(bx,AMReXConst::btype_fy),
+      bx_fz = convert(bx,AMReXConst::btype_fz),
+      bx_n = grow(convert(bx,AMReXConst::btype_n), nghost);
+   
+   const IntVect
+      len_fx = bx_fx.length(),
+      len_fy = bx_fy.length(),
+      len_fz = bx_fz.length(),
+      len_n = bx_n.length();
+   
+   const int
+      total_fx = math::product(len_fx),
+      total_fy = math::product(len_fy),
+      total_fz = math::product(len_fz),
+      total_n = math::product(len_n);
+
+   // 8 Entries per row - i.e. for each dimension pair i,j,
+   // 8 values of E_j in neighbouring nodes affect the local B_i
+   constexpr int cols_per_row = 8;
+   
+   std::vector<Real> dat_x, dat_y, dat_z;
+   std::vector<int>
+      row_indices_x, col_indices_x,
+      row_indices_y, col_indices_y,
+      row_indices_z, col_indices_z;
+
+   dat_x.reserve(cols_per_row*total_fx);
+   dat_y.reserve(cols_per_row*total_fy);
+   dat_z.reserve(cols_per_row*total_fz);
+
+   row_indices_x.reserve(cols_per_row*total_fx);
+   row_indices_y.reserve(cols_per_row*total_fy);
+   row_indices_z.reserve(cols_per_row*total_fz);
+   
+   col_indices_x.reserve(cols_per_row*total_fx);
+   col_indices_y.reserve(cols_per_row*total_fy);
+   col_indices_z.reserve(cols_per_row*total_fz);
+   
+   ParallelFor(bx_fx, [&](int ii, int jj, int kk) {
+      const IntVect
+         cell_000(ii,   jj,   kk  ),
+         cell_010(ii,   jj+1, kk  ),
+         cell_001(ii,   jj,   kk+1),
+         cell_011(ii,   jj+1, kk+1);
+      // Find column in matrix for each node
+      // Each face box has different dimensions, and
+      // Matrix rows are organised as x-faces first then y- and z-
+      // Columns are organised instead as all three components at each node together
+      const int
+         // x-face ID
+         fxID_000 = get_cellID(cell_000, len_fx),
+         // node IDs
+         nyID_000 = get_cellID(cell_000, len_n, nghost) + total_n,
+         nyID_010 = get_cellID(cell_010, len_n, nghost) + total_n,
+         nyID_001 = get_cellID(cell_001, len_n, nghost) + total_n,
+         nyID_011 = get_cellID(cell_011, len_n, nghost) + total_n,
+         nzID_000 = nyID_000 + total_n,
+         nzID_010 = nyID_010 + total_n,
+         nzID_001 = nyID_001 + total_n,
+         nzID_011 = nyID_011 + total_n;
+
+      dat_x.push_back(grad_z);
+      dat_x.push_back(grad_z);
+      dat_x.push_back(-grad_z);
+      dat_x.push_back(-grad_z);
+      dat_x.push_back(-grad_y);
+      dat_x.push_back(grad_y);
+      dat_x.push_back(-grad_y);
+      dat_x.push_back(grad_y);
+      for (int ii=0; ii<8; ++ii) {
+         row_indices_x.push_back(fxID_000);
+      }
+      col_indices_x.push_back(nyID_000);
+      col_indices_x.push_back(nyID_010);
+      col_indices_x.push_back(nyID_001);
+      col_indices_x.push_back(nyID_011);
+      col_indices_x.push_back(nzID_000);
+      col_indices_x.push_back(nzID_010);
+      col_indices_x.push_back(nzID_001);
+      col_indices_x.push_back(nzID_011);
+   });
+
+   ParallelFor(bx_fy, [&](int ii, int jj, int kk) {
+      const IntVect
+         cell_000(ii,   jj,   kk  ),
+         cell_100(ii+1, jj,   kk  ),
+         cell_001(ii,   jj,   kk+1),
+         cell_101(ii+1, jj,   kk+1);
+      // Find column in matrix for each node
+      // Each face box has different dimensions, and
+      // Matrix rows are organised as x-faces first then y- and z-
+      // Columns are organised instead as all three components at each node together
+      const int
+         // y-face ID
+         fyID_000 = get_cellID(cell_000, len_fy),
+         // node IDs
+         nxID_000 = get_cellID(cell_000, len_n, nghost),
+         nxID_100 = get_cellID(cell_100, len_n, nghost),
+         nxID_001 = get_cellID(cell_001, len_n, nghost),
+         nxID_101 = get_cellID(cell_101, len_n, nghost),
+         nzID_000 = nxID_000 + 2*total_n,
+         nzID_100 = nxID_100 + 2*total_n,
+         nzID_001 = nxID_001 + 2*total_n,
+         nzID_101 = nxID_101 + 2*total_n;
+
+      dat_y.push_back(-grad_z);
+      dat_y.push_back(-grad_z);
+      dat_y.push_back(grad_z);
+      dat_y.push_back(grad_z);
+      dat_y.push_back(grad_x);
+      dat_y.push_back(-grad_x);
+      dat_y.push_back(grad_x);
+      dat_y.push_back(-grad_x);
+      for (int ii=0; ii<8; ++ii) {
+         row_indices_y.push_back(fyID_000);
+      }
+      col_indices_y.push_back(nxID_000);
+      col_indices_y.push_back(nxID_100);
+      col_indices_y.push_back(nxID_001);
+      col_indices_y.push_back(nxID_101);
+      col_indices_y.push_back(nzID_000);
+      col_indices_y.push_back(nzID_100);
+      col_indices_y.push_back(nzID_001);
+      col_indices_y.push_back(nzID_101);
+   });
+   
+   ParallelFor(bx_fz, [&](int ii, int jj, int kk) {
+      const IntVect
+         cell_000(ii,   jj,   kk  ),
+         cell_100(ii+1, jj,   kk  ),
+         cell_010(ii,   jj+1, kk  ),
+         cell_110(ii+1, jj+1, kk  );
+      // Find column in matrix for each node
+      // Each face box has different dimensions, and
+      // Matrix rows are organised as x-faces first then y- and z-
+      // Columns are organised instead as all three components at each node together
+      const int
+         // z-face ID
+         fzID_000 = get_cellID(cell_000, len_fz),
+         // node IDs
+         nxID_000 = get_cellID(cell_000, len_n, nghost),
+         nxID_100 = get_cellID(cell_100, len_n, nghost),
+         nxID_010 = get_cellID(cell_010, len_n, nghost),
+         nxID_110 = get_cellID(cell_110, len_n, nghost),
+         nyID_000 = nxID_000 + total_n,
+         nyID_100 = nxID_100 + total_n,
+         nyID_010 = nxID_010 + total_n,
+         nyID_110 = nxID_110 + total_n;
+
+      dat_z.push_back(grad_y);
+      dat_z.push_back(grad_y);
+      dat_z.push_back(-grad_y);
+      dat_z.push_back(-grad_y);
+      dat_z.push_back(-grad_x);
+      dat_z.push_back(grad_x);
+      dat_z.push_back(-grad_x);
+      dat_z.push_back(grad_x);
+      for (int ii=0; ii<8; ++ii) {
+         row_indices_z.push_back(fzID_000);
+      }
+      col_indices_z.push_back(nxID_000);
+      col_indices_z.push_back(nxID_100);
+      col_indices_z.push_back(nxID_010);
+      col_indices_z.push_back(nxID_110);
+      col_indices_z.push_back(nyID_000);
+      col_indices_z.push_back(nyID_100);
+      col_indices_z.push_back(nyID_010);
+      col_indices_z.push_back(nyID_110);
+   });
+
+   std::array<sp_matrix<Real>,3> ret = {
+      sp_matrix<Real>(cols_per_row*total_fx, total_fx, 3*total_n),
+      sp_matrix<Real>(cols_per_row*total_fy, total_fy, 3*total_n),
+      sp_matrix<Real>(cols_per_row*total_fz, total_fz, 3*total_n)
+   };
+
+   ret[0].add_chunk(dat_x, row_indices_x, col_indices_x);
+   ret[1].add_chunk(dat_y, row_indices_y, col_indices_y);
+   ret[2].add_chunk(dat_z, row_indices_z, col_indices_z);
+   
+   return ret;
+}
 
 // Get cell (or node etc.) ID from given cell indices of cell in box
-int get_cellID(const int x_index, const int y_index, const int z_index, const IntVect& len) {
+// If the box has ghost cells then index needs to be shifted to accomodate
+int get_cellID(int x_index, int y_index, int z_index, const IntVect& len, int nghost) {
+   x_index += nghost;
+   y_index += nghost;
+   z_index += nghost;
    return (z_index*len[1] + y_index)*len[0] + x_index;
 }
 
 // Get cell (or node etc.) ID from given cell indices of cell in box
-int get_cellID(const IntVect& cell_indices, const IntVect& len) {
-   return get_cellID(cell_indices[0], cell_indices[1], cell_indices[2], len);
-}
-
-// Get cell (or node etc.) ID from given cell indices of cell in box
-int get_cellID(const std::array<int,3>& cell_indices, const IntVect& len) {
+// If the box has ghost cells then index needs to be shifted to accomodate
+int get_cellID(IntVect cell_indices, const IntVect& len, int nghost) {
+   cell_indices += nghost;
    return get_cellID(cell_indices[0], cell_indices[1], cell_indices[2], len);
 }
 
 // Get cell (or node etc.) indices of cell in box given cell ID
-IntVect get_cell_indices(int cellID, const IntVect& len) {
+// If the box has ghost cells then index needs to be shifted to accomodate
+IntVect get_cell_indices(int cellID, const IntVect& len, int nghost) {
    int
-      x_index = cellID%len[0],
-      y_index = (cellID/len[0])%len[1],
-      z_index = cellID/(len[0]*len[1]);
+      x_index = cellID%len[0]          - nghost,
+      y_index = (cellID/len[0])%len[1] - nghost,
+      z_index = cellID/(len[0]*len[1]) - nghost;
    return IntVect(x_index,y_index,z_index);
 }
+
+/*
+// Apply given matrix to E data in x to give B data in Ax (current)
+// Note: Data is summed not overwritten
+void BE::apply_matrix_E2E(BE& Ax, const BE& x, const LayoutData<matrix<Real>>& matA_E2E) {
+   
+}
+*/

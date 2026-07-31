@@ -1,7 +1,7 @@
 AMREX_HOME ?= $(HOME)/amrex
 HDF5_HOME ?= /usr/lib/x86_64-linux-gnu/hdf5/serial
 
-DEBUG = TRUE
+DEBUG = FALSE
 COMP = gnu
 CXXSTD = c++23
 DIM = 3

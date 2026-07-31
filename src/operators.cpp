@@ -282,20 +282,20 @@ void curl_f2n(MultiFab& node_curl, const MultiFab& xface_data, const MultiFab& y
       const Array4<Real>& nc_array = node_curl.array(mfi);
       
       ParallelFor(bx_n, [&](int ii, int jj, int kk) {
-         nc_array(ii,jj,kk,0) += (f_array_z(ii-1,jj,  kk  ) - f_array_z(ii-1,jj-1,kk  ))/(2*dx[1]);
-         nc_array(ii,jj,kk,0) += (f_array_z(ii,  jj,  kk  ) - f_array_z(ii,  jj-1,kk  ))/(2*dx[1]);
          nc_array(ii,jj,kk,0) -= (f_array_y(ii-1,jj,  kk  ) - f_array_y(ii-1,jj,  kk-1))/(2*dx[2]);
          nc_array(ii,jj,kk,0) -= (f_array_y(ii,  jj,  kk  ) - f_array_y(ii,  jj,  kk-1))/(2*dx[2]);
-         
-         nc_array(ii,jj,kk,1) += (f_array_x(ii,  jj-1,kk  ) - f_array_x(ii,  jj-1,kk-1))/(2*dx[2]);
-         nc_array(ii,jj,kk,1) += (f_array_x(ii,  jj,  kk  ) - f_array_x(ii,  jj,  kk-1))/(2*dx[2]);
+         nc_array(ii,jj,kk,0) += (f_array_z(ii-1,jj,  kk  ) - f_array_z(ii-1,jj-1,kk  ))/(2*dx[1]);
+         nc_array(ii,jj,kk,0) += (f_array_z(ii,  jj,  kk  ) - f_array_z(ii,  jj-1,kk  ))/(2*dx[1]);
+
          nc_array(ii,jj,kk,1) -= (f_array_z(ii,  jj-1,kk  ) - f_array_z(ii-1,jj-1,kk  ))/(2*dx[0]);
          nc_array(ii,jj,kk,1) -= (f_array_z(ii,  jj,  kk  ) - f_array_z(ii-1,jj,  kk  ))/(2*dx[0]);
-         
-         nc_array(ii,jj,kk,2) += (f_array_y(ii,  jj,  kk-1) - f_array_y(ii-1,jj,  kk-1))/(2*dx[0]);
-         nc_array(ii,jj,kk,2) += (f_array_y(ii,  jj,  kk  ) - f_array_y(ii-1,jj,  kk  ))/(2*dx[0]);
+         nc_array(ii,jj,kk,1) += (f_array_x(ii,  jj-1,kk  ) - f_array_x(ii,  jj-1,kk-1))/(2*dx[2]);
+         nc_array(ii,jj,kk,1) += (f_array_x(ii,  jj,  kk  ) - f_array_x(ii,  jj,  kk-1))/(2*dx[2]);
+
          nc_array(ii,jj,kk,2) -= (f_array_x(ii,  jj,  kk-1) - f_array_x(ii,  jj-1,kk-1))/(2*dx[1]);
          nc_array(ii,jj,kk,2) -= (f_array_x(ii,  jj,  kk  ) - f_array_x(ii,  jj-1,kk  ))/(2*dx[1]);
+         nc_array(ii,jj,kk,2) += (f_array_y(ii,  jj,  kk-1) - f_array_y(ii-1,jj,  kk-1))/(2*dx[0]);
+         nc_array(ii,jj,kk,2) += (f_array_y(ii,  jj,  kk  ) - f_array_y(ii-1,jj,  kk  ))/(2*dx[0]);
       });
    }
 }

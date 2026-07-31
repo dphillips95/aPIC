@@ -57,6 +57,25 @@ namespace math {
       using std::sqrt;
       return sqrt(square(x));
    }
+
+   inline auto product(){ return 1; }
+   auto product(const auto& x) {
+      if constexpr(requires{ x[0]; }) {
+         std::remove_cvref_t<decltype(x[0])> ret{1};
+         for (const auto& y: x) ret *= y;
+         return ret;
+      } else {
+         return x;
+      }
+   }
+   auto product(const auto& x, const auto&... rest) {
+      return product(x) * product(rest...);
+   }
+   template <class T> T product(std::initializer_list<T> x) {
+      T ret{1};
+      for (const auto& y: x) ret *= y;
+      return ret;
+   }
 }
 
 #endif
