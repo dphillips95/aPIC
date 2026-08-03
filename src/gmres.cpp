@@ -56,7 +56,7 @@ void gmres_step(std::array<MultiFab,3>& B_f, MultiFab& E_n, GpuArray<Real,3> dx,
       curl_En[ii].setVal(0.0);
    }
    curl_Bf.setVal(0.0);
-
+   
    // State vector (lhs); initial state is start of time step
    
    BE::Copy_Bfx(x, B_f[0]);
@@ -572,7 +572,7 @@ std::array<sp_matrix<Real>,3> get_curl_f2n_operator_sparse(const Box& bx, const 
       total_fy = math::product(len_fy),
       total_fz = math::product(len_fz),
       total_n = math::product(len_n);
-
+   
    // *_xy, first dim "x" indicates component of B (thus different matrices), second dim "y" indicates component of E (thus different chunk of matrix)
    // These never match as B_i does not affect E_i
    std::vector<Real>
@@ -601,7 +601,7 @@ std::array<sp_matrix<Real>,3> get_curl_f2n_operator_sparse(const Box& bx, const 
    dat_yz.reserve(cols_per_row*total_n);
    dat_zx.reserve(cols_per_row*total_n);
    dat_zy.reserve(cols_per_row*total_n);
-      
+   
    row_indices_xy.reserve(cols_per_row*total_n);
    row_indices_zy.reserve(cols_per_row*total_n);
    row_indices_xz.reserve(cols_per_row*total_n);
@@ -609,7 +609,7 @@ std::array<sp_matrix<Real>,3> get_curl_f2n_operator_sparse(const Box& bx, const 
    row_indices_yz.reserve(cols_per_row*total_n);
    row_indices_zx.reserve(cols_per_row*total_n);
    row_indices_zy.reserve(cols_per_row*total_n);
-      
+   
    col_indices_xy.reserve(cols_per_row*total_n);
    col_indices_xz.reserve(cols_per_row*total_n);
    col_indices_yx.reserve(cols_per_row*total_n);
@@ -658,7 +658,7 @@ std::array<sp_matrix<Real>,3> get_curl_f2n_operator_sparse(const Box& bx, const 
       dat_yx.push_back(grad_z);
       dat_yx.push_back(-grad_z);
       dat_yx.push_back(-grad_z);
-      for (int ii=0; ii<4; ++ii) {
+      for (int nn=0; nn<4; ++nn) {
          row_indices_yx.push_back(nxID_000);
       }
       col_indices_yx.push_back(fyID_101);
@@ -670,7 +670,7 @@ std::array<sp_matrix<Real>,3> get_curl_f2n_operator_sparse(const Box& bx, const 
       dat_zx.push_back(-grad_y);
       dat_zx.push_back(grad_y);
       dat_zx.push_back(grad_y);
-      for (int ii=0; ii<4; ++ii) {
+      for (int nn=0; nn<4; ++nn) {
          row_indices_zx.push_back(nxID_000);
       }
       col_indices_zx.push_back(fzID_110);
@@ -683,7 +683,7 @@ std::array<sp_matrix<Real>,3> get_curl_f2n_operator_sparse(const Box& bx, const 
       dat_zy.push_back(-grad_x);
       dat_zy.push_back(grad_x);
       dat_zy.push_back(-grad_x);
-      for (int ii=0; ii<4; ++ii) {
+      for (int nn=0; nn<4; ++nn) {
          row_indices_zy.push_back(nyID_000);
       }
       col_indices_zy.push_back(fzID_110);
@@ -695,7 +695,7 @@ std::array<sp_matrix<Real>,3> get_curl_f2n_operator_sparse(const Box& bx, const 
       dat_xy.push_back(-grad_z);
       dat_xy.push_back(grad_z);
       dat_xy.push_back(grad_z);
-      for (int ii=0; ii<4; ++ii) {
+      for (int nn=0; nn<4; ++nn) {
          row_indices_xy.push_back(nyID_000);
       }
       col_indices_xy.push_back(fxID_011);
@@ -708,7 +708,7 @@ std::array<sp_matrix<Real>,3> get_curl_f2n_operator_sparse(const Box& bx, const 
       dat_xz.push_back(-grad_y);
       dat_xz.push_back(grad_y);
       dat_xz.push_back(-grad_y);
-      for (int ii=0; ii<4; ++ii) {
+      for (int nn=0; nn<4; ++nn) {
          row_indices_xz.push_back(nzID_000);
       }
       col_indices_xz.push_back(fxID_011);
@@ -720,32 +720,35 @@ std::array<sp_matrix<Real>,3> get_curl_f2n_operator_sparse(const Box& bx, const 
       dat_yz.push_back(grad_x);
       dat_yz.push_back(-grad_x);
       dat_yz.push_back(grad_x);
-      for (int ii=0; ii<4; ++ii) {
+      for (int nn=0; nn<4; ++nn) {
          row_indices_yz.push_back(nzID_000);
       }
-      col_indices_zy.push_back(fyID_101);
+      col_indices_yz.push_back(fyID_101);
       col_indices_yz.push_back(fyID_001);
       col_indices_yz.push_back(fyID_100);
       col_indices_yz.push_back(fyID_000);
    });
 
    std::array<sp_matrix<Real>,3> ret = {
-      sp_matrix<Real>(3*cols_per_row*total_n, 3*total_n, total_fx),
-      sp_matrix<Real>(3*cols_per_row*total_n, 3*total_n, total_fy),
-      sp_matrix<Real>(3*cols_per_row*total_n, 3*total_n, total_fz)
+      sp_matrix<Real>(2*cols_per_row*total_n, 3*total_n, total_fx),
+      sp_matrix<Real>(2*cols_per_row*total_n, 3*total_n, total_fy),
+      sp_matrix<Real>(2*cols_per_row*total_n, 3*total_n, total_fz)
    };
 
-   ret[0].add_empty_rows(total_n);
-   ret[1].add_chunk(dat_yx, row_indices_yx, col_indices_yx);
-   ret[2].add_chunk(dat_zx, row_indices_zx, col_indices_zx);
-
+   // ret[0].add_rows(total_n);
    ret[0].add_chunk(dat_xy, row_indices_xy, col_indices_xy);
-   ret[1].add_empty_rows(total_n);
-   ret[2].add_chunk(dat_zy, row_indices_zy, col_indices_zy);
-   
    ret[0].add_chunk(dat_xz, row_indices_xz, col_indices_xz);
+   ret[0].finalise();
+   
+   ret[1].add_chunk(dat_yx, row_indices_yx, col_indices_yx);
+   // ret[1].add_rows(total_n);
    ret[1].add_chunk(dat_yz, row_indices_yz, col_indices_yz);
-   ret[2].add_empty_rows(total_n);
+   ret[1].finalise();
+   
+   ret[2].add_chunk(dat_zx, row_indices_zx, col_indices_zx);
+   ret[2].add_chunk(dat_zy, row_indices_zy, col_indices_zy);
+   ret[2].finalise();
+   // ret[2].add_rows(total_n);
    
    return ret;
 }
@@ -787,11 +790,11 @@ std::array<sp_matrix<Real>,3> get_curl_n2f_operator_sparse(const Box& bx, const 
       row_indices_x, col_indices_x,
       row_indices_y, col_indices_y,
       row_indices_z, col_indices_z;
-
+   
    dat_x.reserve(cols_per_row*total_fx);
    dat_y.reserve(cols_per_row*total_fy);
    dat_z.reserve(cols_per_row*total_fz);
-
+   
    row_indices_x.reserve(cols_per_row*total_fx);
    row_indices_y.reserve(cols_per_row*total_fy);
    row_indices_z.reserve(cols_per_row*total_fz);
@@ -831,7 +834,7 @@ std::array<sp_matrix<Real>,3> get_curl_n2f_operator_sparse(const Box& bx, const 
       dat_x.push_back(grad_y);
       dat_x.push_back(-grad_y);
       dat_x.push_back(grad_y);
-      for (int ii=0; ii<8; ++ii) {
+      for (int nn=0; nn<8; ++nn) {
          row_indices_x.push_back(fxID_000);
       }
       col_indices_x.push_back(nyID_000);
@@ -875,7 +878,7 @@ std::array<sp_matrix<Real>,3> get_curl_n2f_operator_sparse(const Box& bx, const 
       dat_y.push_back(-grad_x);
       dat_y.push_back(grad_x);
       dat_y.push_back(-grad_x);
-      for (int ii=0; ii<8; ++ii) {
+      for (int nn=0; nn<8; ++nn) {
          row_indices_y.push_back(fyID_000);
       }
       col_indices_y.push_back(nxID_000);
@@ -919,7 +922,7 @@ std::array<sp_matrix<Real>,3> get_curl_n2f_operator_sparse(const Box& bx, const 
       dat_z.push_back(grad_x);
       dat_z.push_back(-grad_x);
       dat_z.push_back(grad_x);
-      for (int ii=0; ii<8; ++ii) {
+      for (int nn=0; nn<8; ++nn) {
          row_indices_z.push_back(fzID_000);
       }
       col_indices_z.push_back(nxID_000);

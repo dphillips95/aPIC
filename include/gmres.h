@@ -616,7 +616,7 @@ void gmres_step_matrix(std::array<amrex::MultiFab,3>& B_f, amrex::MultiFab& E_n,
    linop_matrix<T> gmres_operator(E_n.boxArray(), E_n.distributionMap, E_n.n_grow[0], dx, dt*theta, period, matA_B2E, matA_E2B, matA_E2E);
    
    amrex::GMRES<BE,linop_matrix<T>> gmres_solver;
-   
+
    /*
    BE::apply_matrix_E2B(Ax, x, matA_E2B, 1);
    BE::apply_matrix_B2E(Ax, x, matA_B2E, 1);
@@ -642,12 +642,12 @@ void gmres_step_matrix(std::array<amrex::MultiFab,3>& B_f, amrex::MultiFab& E_n,
       const amrex::FArrayBox& Ax_Bfy_data { Ax_Bfy[mfi] };
       const amrex::FArrayBox& Ax_Bfz_data { Ax_Bfz[mfi] };
       
-      const matrix<amrex::Real>& matA_Bx2E { matA_B2E[0][mfi] };
-      const matrix<amrex::Real>& matA_By2E { matA_B2E[1][mfi] };
-      const matrix<amrex::Real>& matA_Bz2E { matA_B2E[2][mfi] };
-      const matrix<amrex::Real>& matA_E2Bx { matA_E2B[0][mfi] };
-      const matrix<amrex::Real>& matA_E2By { matA_E2B[1][mfi] };
-      const matrix<amrex::Real>& matA_E2Bz { matA_E2B[2][mfi] };
+      const sp_matrix<amrex::Real>& matA_Bx2E { matA_B2E[0][mfi] };
+      const sp_matrix<amrex::Real>& matA_By2E { matA_B2E[1][mfi] };
+      const sp_matrix<amrex::Real>& matA_Bz2E { matA_B2E[2][mfi] };
+      const sp_matrix<amrex::Real>& matA_E2Bx { matA_E2B[0][mfi] };
+      const sp_matrix<amrex::Real>& matA_E2By { matA_E2B[1][mfi] };
+      const sp_matrix<amrex::Real>& matA_E2Bz { matA_E2B[2][mfi] };
       
       matA_Bx2E.print_rowsums("Bx2E");
       matA_By2E.print_rowsums("By2E");

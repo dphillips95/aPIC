@@ -138,13 +138,15 @@ private:
 public:
    sp_matrix() : m_nvals(0), m_nrows(0), m_ncols(0), m_dat(), m_col_indices(), m_row_indices() {}
    
-   sp_matrix(size_t n, size_t m) : m_nvals(0), m_nrows(n), m_ncols(m), m_dat(), m_col_indices(), m_row_indices(n+1) {
-      m_row_indices[0] = 0;
+   sp_matrix(size_t n, size_t m) : m_nvals(0), m_nrows(n), m_ncols(m), m_dat(), m_col_indices(), m_row_indices() {
+      m_row_indices.reserve(n+1);
+      m_row_indices.push_back(0);
    }
    
-   sp_matrix(size_t size_est, size_t n, size_t m) : m_nvals(0), m_nrows(n), m_ncols(m), m_dat(), m_col_indices(), m_row_indices(n+1) {
-      m_row_indices[0] = 0;
+   sp_matrix(size_t size_est, size_t n, size_t m) : m_nvals(0), m_nrows(n), m_ncols(m), m_dat(), m_col_indices(), m_row_indices() {
       m_dat.reserve(size_est);
+      m_row_indices.reserve(n+1);
+      m_row_indices.push_back(0);
       m_col_indices.reserve(size_est);
    }
    
@@ -159,17 +161,24 @@ public:
    void end_row() { m_row_indices.push_back(m_nvals); }
 
    void add_chunk(const std::vector<T>& dat, const std::vector<int>& row_indices, const std::vector<int>& col_indices) {
-      for (size_t ii=0; ii<dat.size(); ++ii) {
-         this->add_empty_rows(row_indices[ii] - row_indices[ii-1]);
+      this->add_rows(row_indices[0] - m_row_indices.size() + 1);
+      this->add_entry(dat[0], col_indices[0]);
+      for (size_t ii=1; ii<dat.size(); ++ii) {
+         this->add_rows(row_indices[ii] - row_indices[ii-1]);
          this->add_entry(dat[ii], col_indices[ii]);
       }
       this->end_row();
    }
 
-   void add_empty_rows(int empty_rows) {
-      for (size_t ii=0; ii<empty_rows; ++ii) {
+   void add_rows(size_t num_rows) {
+      for (size_t ii=0; ii<num_rows; ++ii) {
          this->end_row();
       }
+   }
+
+   // Fill in extra rows of m_row_indices at end if blank
+   void finalise() {
+      this->add_rows(m_nrows - m_row_indices.size() + 1);
    }
    
    std::array<size_t,2> size() const { return {m_nrows,m_ncols}; }
