@@ -26,7 +26,6 @@ Author(s): David Phillips
 #define GMRES_H_
 
 #include <AMReX_REAL.H>
-#include <AMReX_Print.H>
 
 #include <cmath>
 
@@ -34,28 +33,22 @@ Author(s): David Phillips
 #include <operators.h>
 #include <math_functions.h>
 
-// GMRES linear operator class
-// The "vector" is a class BE consisting of MultiFabs of B and E, and ahandful of class methods for norms etc.
-// They cannot be combined into a single MultiFab as they do not share the same grid
-
 // GMRES "vector" class; consists of B and E MultiFabs
-// Due to staggered grid, face B multiFabs are separate while node E is kept together
+// Due to staggered grid, face B multiFabs are separated while node E is kept together
 class BE {
 private:
-   amrex::BoxArray m_ba;
    amrex::DistributionMapping m_dm;
+   int m_nghost;
+   amrex::Periodicity m_period;
+   amrex::BoxArray m_ba;
    amrex::MultiFab m_B_fx;
    amrex::MultiFab m_B_fy;
    amrex::MultiFab m_B_fz;
    amrex::MultiFab m_E_n;
-   amrex::Periodicity m_period;
-   int m_nghost;
 public:
-   BE() {
-      
-   }
+   BE() {}
    
-   BE(const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, const int nghost, const amrex::Periodicity period) {
+   BE(const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, const int nghost, const amrex::Periodicity period) : m_dm(dm), m_nghost(nghost), m_period(period) {
       m_B_fx = amrex::MultiFab(convert(ba,AMReXConst::btype_fx),dm,1,nghost);
       m_B_fy = amrex::MultiFab(convert(ba,AMReXConst::btype_fy),dm,1,nghost);
       m_B_fz = amrex::MultiFab(convert(ba,AMReXConst::btype_fz),dm,1,nghost);
@@ -63,9 +56,6 @@ public:
       this->setVal(0.0);
 
       m_ba = convert(ba,AMReXConst::btype_c);
-      m_dm = dm;
-      m_nghost = nghost;
-      m_period = period;
    }
    
    BE copy_dim(int nghost = -1) const {
@@ -79,24 +69,34 @@ public:
       return new_BE;
    }
    
-   const amrex::MultiFab& getB_fx() const {
+   const amrex::MultiFab& getB_fx_const() const {
       return m_B_fx;
    }
-   const amrex::MultiFab& getB_fy() const {
+   const amrex::MultiFab& getB_fy_const() const {
       return m_B_fy;
    }
-   const amrex::MultiFab& getB_fz() const {
+   const amrex::MultiFab& getB_fz_const() const {
       return m_B_fz;
    }
-   const amrex::MultiFab& getE_n() const {
+   const amrex::MultiFab& getE_n_const() const {
+      return m_E_n;
+   }
+
+   amrex::MultiFab& getB_fx() {
+      return m_B_fx;
+   }
+   amrex::MultiFab& getB_fy() {
+      return m_B_fy;
+   }
+   amrex::MultiFab& getB_fz() {
+      return m_B_fz;
+   }
+   amrex::MultiFab& getE_n() {
       return m_E_n;
    }
 
    // Return number of ghost cells
-   int nGrow_Bfx() const { return m_B_fx.nGrow(); }
-   int nGrow_Bfy() const { return m_B_fy.nGrow(); }
-   int nGrow_Bfz() const { return m_B_fz.nGrow(); }
-   int nGrow_En() const { return m_E_n.nGrow(); }
+   int nghost() const { return m_nghost; }
    
    static void Copy_Bfx(BE& lhs, const amrex::MultiFab& rhs) {
       amrex::MultiFab::Copy(lhs.m_B_fx, rhs, 0, 0, 1, rhs.nGrow());
@@ -146,10 +146,10 @@ public:
    }
    
    static amrex::Real dotProduct(const BE& v1, const BE& v2) {
-      amrex::Real dot_Bfx = amrex::MultiFab::Dot(v1.m_B_fx, 0, v2.m_B_fx, 0, 1, v1.nGrow_Bfx());
-      amrex::Real dot_Bfy = amrex::MultiFab::Dot(v1.m_B_fy, 0, v2.m_B_fy, 0, 1, v1.nGrow_Bfy());
-      amrex::Real dot_Bfz = amrex::MultiFab::Dot(v1.m_B_fz, 0, v2.m_B_fz, 0, 1, v1.nGrow_Bfz());
-      amrex::Real dot_En = amrex::MultiFab::Dot(v1.m_E_n, 0, v2.m_E_n, 0, 3, v1.nGrow_En());
+      amrex::Real dot_Bfx = amrex::MultiFab::Dot(v1.m_B_fx, 0, v2.m_B_fx, 0, 1, v1.nghost());
+      amrex::Real dot_Bfy = amrex::MultiFab::Dot(v1.m_B_fy, 0, v2.m_B_fy, 0, 1, v1.nghost());
+      amrex::Real dot_Bfz = amrex::MultiFab::Dot(v1.m_B_fz, 0, v2.m_B_fz, 0, 1, v1.nghost());
+      amrex::Real dot_En = amrex::MultiFab::Dot(v1.m_E_n, 0, v2.m_E_n, 0, 3, v1.nghost());
       
       // Rescale B and E with mu0 and eps0 to avoid bias
       return (dot_Bfx + dot_Bfy + dot_Bfz)/PhysConst::mu0 + dot_En*PhysConst::eps0;
@@ -230,6 +230,9 @@ public:
    }
 };
 
+// GMRES linear operator class
+// The "vector" is a class BE consisting of MultiFabs of B and E, and ahandful of class methods for norms etc.
+// They cannot be combined into a single MultiFab as they do not share the same grid
 class linop {
 private:
    // BoxArray here has no ghost cells
@@ -242,14 +245,7 @@ private:
 public:
    using RT = amrex::Real;
    
-   linop(const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, int nghost, const amrex::GpuArray<RT,3>& dx, RT tFactor, const amrex::Periodicity& period) {
-      m_ba = convert(ba,AMReXConst::btype_c);
-      m_dm = dm;
-      m_nghost = nghost;
-      m_dx = dx;
-      m_tFactor = tFactor;
-      m_period = period;
-   }
+   linop(const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, int nghost, const amrex::GpuArray<RT,3>& dx, RT tFactor, const amrex::Periodicity& period) : m_ba(convert(ba,AMReXConst::btype_c)), m_dm(dm), m_nghost(nghost), m_dx(dx), m_tFactor(tFactor), m_period(period) {}
    
    void setBoxArray(const amrex::BoxArray& ba) {
       m_ba = convert(ba,AMReXConst::btype_c);
@@ -270,24 +266,25 @@ public:
    // Actual operator matrix product, i.e. x input, Ax output
    void apply(BE& Ax, const BE& x) {
       BL_PROFILE("gmres_apply()");
-      static amrex::MultiFab curl_Bf(convert(x.getE_n().boxArray(),AMReXConst::btype_n),x.getE_n().distributionMap, 3, 0);
+      static amrex::MultiFab curl_Bf(convert(m_ba,AMReXConst::btype_n),m_dm, 3, 0);
       static std::array<amrex::MultiFab,3> curl_En = {
-         amrex::MultiFab(convert(x.getE_n().boxArray(),AMReXConst::btype_fx),x.getE_n().distributionMap, 1, 0),
-         amrex::MultiFab(convert(x.getE_n().boxArray(),AMReXConst::btype_fy),x.getE_n().distributionMap, 1, 0),
-         amrex::MultiFab(convert(x.getE_n().boxArray(),AMReXConst::btype_fz),x.getE_n().distributionMap, 1, 0)
+         amrex::MultiFab(convert(m_ba,AMReXConst::btype_fx),m_dm, 1, 0),
+         amrex::MultiFab(convert(m_ba,AMReXConst::btype_fy),m_dm, 1, 0),
+         amrex::MultiFab(convert(m_ba,AMReXConst::btype_fz),m_dm, 1, 0)
       };
       
       BE::Copy(Ax,x,0);
-
+      
       BL_PROFILE_VAR("gmres_curl_En()",TIMER_curl_En);
-      curl_n2f(curl_En, x.getE_n(), m_dx);
+      curl_n2f(curl_En, x.getE_n_const(), m_dx);
       BL_PROFILE_VAR_STOP(TIMER_curl_En);
+      
       BL_PROFILE_VAR("gmres_curl_Bf()",TIMER_curl_Bf);
-      curl_f2n(curl_Bf, x.getB_fx(), x.getB_fy(), x.getB_fz(), m_dx);
+      curl_f2n(curl_Bf, x.getB_fx_const(), x.getB_fy_const(), x.getB_fz_const(), m_dx);
       BL_PROFILE_VAR_STOP(TIMER_curl_Bf);
       
-      Ax.Saxpy_B(Ax, curl_En, m_tFactor);
-      Ax.Saxpy_En(Ax, curl_Bf, -m_tFactor*math::square(PhysConst::c));
+      BE::Saxpy_B(Ax, curl_En, m_tFactor);
+      BE::Saxpy_En(Ax, curl_Bf, -m_tFactor*math::square(PhysConst::c));
    }
    
    // Assign lhs = rhs
@@ -303,7 +300,7 @@ public:
    
    // lhs += a*rhs
    static void increment(BE& lhs, const BE& rhs, RT a) {
-      lhs.Saxpy(lhs,rhs,a);
+      BE::Saxpy(lhs,rhs,a);
       lhs.apply_BCs();
    }
    
@@ -338,6 +335,6 @@ public:
    
 };
 
-void gmres_step(std::array<amrex::MultiFab,3>& B_f, amrex::MultiFab& E_n, amrex::GpuArray<amrex::Real,3> dx, amrex::Real dt, amrex::Real theta, amrex::Periodicity period, amrex::Real rtol, amrex::Real atol);
+void gmres_step(std::array<amrex::MultiFab,3>& B_f, amrex::MultiFab& E_n, amrex::GpuArray<amrex::Real,3> dx, amrex::Real dt, amrex::Real theta, amrex::Periodicity period, amrex::Real rtol, amrex::Real atol, int verbosity = 0);
 
 #endif

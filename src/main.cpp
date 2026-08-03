@@ -70,7 +70,8 @@ int main(int argc, char* argv[]) {
          rand_Ey_min = 0, rand_Ey_max = 0,
          rand_Ez_min = 0, rand_Ez_max = 0;
       Real mass_ratio = PhysConst::m_p/PhysConst::m_e;
-
+      int verbosity = 0;
+      
       std::vector<Population> pop_list;
       
       {
@@ -92,6 +93,7 @@ int main(int argc, char* argv[]) {
          inp_s.query("Vdt_dx_cap", Vdt_dx_cap);
          inp_s.query("save_steps", save_steps);
          inp_s.query("mass_ratio", mass_ratio);
+         inp_s.query("verbosity", verbosity);
          
          ParmParse inp_d("domain");
             
@@ -205,12 +207,14 @@ int main(int argc, char* argv[]) {
       std::array<MultiFab,3> Jp_f = {
          MultiFab(ba_fx, dm, 1, nghost),
          MultiFab(ba_fy, dm, 1, nghost),
-         MultiFab(ba_fz, dm, 1, nghost)};
+         MultiFab(ba_fz, dm, 1, nghost)
+      };
 
       std::array<MultiFab,3> B_f = {
          MultiFab(ba_fx, dm, 1, nghost),
          MultiFab(ba_fy, dm, 1, nghost),
-         MultiFab(ba_fz, dm, 1, nghost)};
+         MultiFab(ba_fz, dm, 1, nghost)
+      };
       
       Jp_c.setVal(0.0);
       B_n.setVal(0.0);
@@ -288,7 +292,7 @@ int main(int argc, char* argv[]) {
             //    x = (ii+0.5)*dx[0] + x_min,
             //    y = jj*dx[1] + y_min,
             //    z = (kk+0.5)*dx[2] + z_min;
-            // Bf_array_y(ii,jj,kk) = 0.0;
+            // Bf_array_y(ii,jj,kk) = ii;
 
             for (std::string tmp : Btype) {
                if (tmp == "uniform") {
@@ -304,7 +308,7 @@ int main(int argc, char* argv[]) {
             //    x = (ii+0.5)*dx[0] + x_min,
             //    y = (jj+0.5)*dx[1] + y_min,
             //    z = kk*dx[2] + z_min;
-            // Bf_array_z(ii,jj,kk) = ii;
+            // Bf_array_z(ii,jj,kk) = ii*ii;
 
             for (std::string tmp : Btype) {
                if (tmp == "uniform") {
@@ -340,7 +344,7 @@ int main(int argc, char* argv[]) {
             node_period(B_f[nn], geom.periodicity());
          }
       }
-
+      
       // Complete boundary conditions
       E_n.FillBoundary(geom.periodicity());
       for (int nn=0; nn<3; ++nn) {
@@ -400,7 +404,7 @@ int main(int argc, char* argv[]) {
             WriteSingleLevelPlotfileHDF5(pltfile, plt_Fab, {"Bx","By","Bz","Ex","Ey","Ez","B_Energy","E_Energy","EM_Energy"}, geom, time, step);
          }
 
-         gmres_step(B_f, E_n, dx, dt, theta, geom.periodicity(), rtol, atol);
+         gmres_step(B_f, E_n, dx, dt, theta, geom.periodicity(), rtol, atol, verbosity);
 
          // Print() << "E_n: " << sym_test(E_n,sym_dir) << std::endl
          //         << "B_fx: " << sym_test(B_f[0],sym_dir) << std::endl

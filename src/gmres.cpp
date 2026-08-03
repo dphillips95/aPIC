@@ -35,7 +35,7 @@ Author(s): David Phillips
 using namespace amrex;
 
 // Advance B and E fields by solving gmres system
-void gmres_step(std::array<MultiFab,3>& B_f, MultiFab& E_n, GpuArray<Real,3> dx, Real dt, Real theta, Periodicity period, Real rtol, Real atol) {
+void gmres_step(std::array<MultiFab,3>& B_f, MultiFab& E_n, GpuArray<Real,3> dx, Real dt, Real theta, Periodicity period, Real rtol, Real atol, int verbosity) {
    BL_PROFILE("gmres_step()");
    
    // To prevent reallocation every step, state vector BE and curl results are pre-allocated static
@@ -78,7 +78,7 @@ void gmres_step(std::array<MultiFab,3>& B_f, MultiFab& E_n, GpuArray<Real,3> dx,
    GMRES<BE,linop> gmres_solver;
    
    gmres_solver.define(gmres_operator);
-   gmres_solver.setVerbose(1);
+   gmres_solver.setVerbose(verbosity);
    gmres_solver.solve(x, b, rtol, atol);
    
    int gmres_status = gmres_solver.getStatus();
@@ -91,8 +91,8 @@ void gmres_step(std::array<MultiFab,3>& B_f, MultiFab& E_n, GpuArray<Real,3> dx,
       Print() << "GMRES Iteration count: " << gmres_solver.getNumIters() << std::endl;
    }
    
-   MultiFab::Copy(B_f[0], x.getB_fx(), 0, 0, 1, x.nGrow_Bfx());
-   MultiFab::Copy(B_f[1], x.getB_fy(), 0, 0, 1, x.nGrow_Bfy());
-   MultiFab::Copy(B_f[2], x.getB_fz(), 0, 0, 1, x.nGrow_Bfz());
-   MultiFab::Copy(E_n, x.getE_n(), 0, 0, 3, x.nGrow_En());
+   MultiFab::Copy(B_f[0], x.getB_fx(), 0, 0, 1, x.nghost());
+   MultiFab::Copy(B_f[1], x.getB_fy(), 0, 0, 1, x.nghost());
+   MultiFab::Copy(B_f[2], x.getB_fz(), 0, 0, 1, x.nghost());
+   MultiFab::Copy(E_n, x.getE_n(), 0, 0, 3, x.nghost());
 }
