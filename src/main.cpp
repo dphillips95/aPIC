@@ -61,6 +61,7 @@ int main(int argc, char* argv[]) {
       bool v_1D = false;
       int steps, save_steps = 0;
       Real dt, theta = 0.5, rtol = 1e-15, atol = -1, Vdt_dx_cap = 0.75;
+      Real inp_dx = -1, inp_dy = -1, inp_dz = -1;
       std::vector<std::string> pop_name_list, Btype, Etype;
       Real Bx = 0, By = 0, Bz = 0, Ex = 0, Ey = 0, Ez = 0,
          rand_Bx_min = 0, rand_Bx_max = 0,
@@ -101,13 +102,33 @@ int main(int argc, char* argv[]) {
          inp_d.get("y_size", y_size);
          inp_d.get("z_size", z_size);
          
-         inp_d.query("x_min", x_min);
-         inp_d.query("x_max", x_max);
-         inp_d.query("y_min", y_min);
-         inp_d.query("y_max", y_max);
-         inp_d.query("z_min", z_min);
-         inp_d.query("z_max", z_max);
+         inp_d.query("dx", inp_dx);
+         inp_d.query("dy", inp_dy);
+         inp_d.query("dz", inp_dz);
 
+         // If dx, dy, dz provided then calculated min and max based on it
+         if (inp_dx > 0) {
+            x_min = -inp_dx*x_size/2;
+            x_max = inp_dx*x_size/2;
+         } else {
+            inp_d.query("x_min", x_min);
+            inp_d.query("x_max", x_max);
+         }
+         if (inp_dy > 0) {
+            y_min = -inp_dy*y_size/2;
+            y_max = inp_dy*y_size/2;
+         } else {
+            inp_d.query("y_min", y_min);
+            inp_d.query("y_max", y_max);
+         }
+         if (inp_dz > 0) {
+            z_min = -inp_dz*z_size/2;
+            z_max = inp_dz*z_size/2;
+         } else {
+            inp_d.query("z_min", z_min);
+            inp_d.query("z_max", z_max);
+         }
+         
          inp_d.query("period", periodicity);
 
          inp_d.query("max_grid_size", max_grid_size);
@@ -185,7 +206,12 @@ int main(int argc, char* argv[]) {
          box_c(IntVect{0,0,0}, IntVect{x_size-1, y_size-1, z_size-1}); // cell-centred
       
       BoxArray
-         ba_c(box_c), // cell-centred, others generated via conversion as needed
+         ba_c(box_c); // cell-centred, others generated via conversion as needed
+
+      // Divide domain into boxes
+      ba_c.maxSize(max_grid_size);
+      
+      BoxArray
          ba_n = convert(ba_c,AMReXConst::btype_n),
          ba_fx = convert(ba_c,AMReXConst::btype_fx),
          ba_fy = convert(ba_c,AMReXConst::btype_fy),
