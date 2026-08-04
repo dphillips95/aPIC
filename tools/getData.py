@@ -96,13 +96,29 @@ with open('input.cfg', 'r') as f:
                   params["z_min"] = float(value)
                case "z_max":
                   params["z_max"] = float(value)
+               case "dx":
+                  params["dx"] = float(value)
+               case "dy":
+                  params["dy"] = float(value)
+               case "dz":
+                  params["dz"] = float(value)
                case "x_size":
                   params["nx"] = int(value)
                case "y_size":
                   params["ny"] = int(value)
                case "z_size":
                   params["nz"] = int(value)
-               
+
+   if "dx" in params.keys():
+      params["x_min"] = -params["dx"]*params["nx"]/2
+      params["x_max"] = params["dx"]*params["nx"]/2
+   if "dy" in params.keys():
+      params["y_min"] = -params["dy"]*params["ny"]/2
+      params["y_max"] = params["dy"]*params["ny"]/2
+   if "dz" in params.keys():
+      params["z_min"] = -params["dz"]*params["nz"]/2
+      params["z_max"] = params["dz"]*params["nz"]/2
+   
    params["Lx"] = params["x_max"] - params["x_min"]
    params["Ly"] = params["y_max"] - params["y_min"]
    params["Lz"] = params["z_max"] - params["z_min"]

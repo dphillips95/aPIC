@@ -239,7 +239,7 @@ int main(int argc, char* argv[]) {
          // curl_E_fx_sp(ba_fx, dm, 3, 0),
          // curl_E_fy_sp(ba_fy, dm, 3, 0),
          // curl_E_fz_sp(ba_fz, dm, 3, 0);
-
+      
       curl_B_n.setVal(0.0);
       curl_E_fx.setVal(0.0);
       curl_E_fy.setVal(0.0);
@@ -261,21 +261,6 @@ int main(int argc, char* argv[]) {
          MultiFab(ba_fz, dm, 1, nghost)
       };
 
-      /*
-      // Distributed matrices for curl operators
-      std::array<LayoutData<matrix<Real>>,3> matA_B2E = {
-         LayoutData<matrix<Real>>(ba_c,dm),
-         LayoutData<matrix<Real>>(ba_c,dm),
-         LayoutData<matrix<Real>>(ba_c,dm)
-      };
-      std::array<LayoutData<matrix<Real>>,3> matA_E2B = {
-         LayoutData<matrix<Real>>(ba_c,dm),
-         LayoutData<matrix<Real>>(ba_c,dm),
-         LayoutData<matrix<Real>>(ba_c,dm)
-      };
-      LayoutData<matrix<Real>> matA_E2E(ba_c,dm);
-      */
-      
       // Distributed sparse matrices for curl operators
       std::array<LayoutData<sp_matrix<Real>>,3> matA_B2E = {
          LayoutData<sp_matrix<Real>>(ba_c,dm),
@@ -399,33 +384,34 @@ int main(int argc, char* argv[]) {
             }  
          });
       }
-      
-      // Fix non cell-centred data periodicity so that last valid point
-      // is equal to first along each dimension that is both periodic and not cell-centred
-      // i.e. face data is modified only along the face dimension
-      //         (x-face data only modifies in x-dimension),
-      //      edge data is modified only along non-edge dimensions
-      //         (x-directed edge data modifies in y- and z-dimensions),
-      //      node data is modified along all dimensions,
-      //      cell-centred data is not modified at all.
-      // Provided that the respective dimension is also periodic
-      //
-      // (FillBoundary does not do this, as only invalid (ghost) data is modified
-      // and the far ends are not identified as invalid)
-      //
-      // N.B. Theoretically this should only be necessary to run at initialisation of each field variable
-      // At future times this should hold during evolution
-      // If this rule is violated at any future time then this indicates a bug in the code
-      //
-      // !!! WARNING: Current implementation assumes only one box for entire domain!!!
-      if (geom.periodicity().isAnyPeriodic()) {
-         node_period(E_n, geom.periodicity());
-         for (int nn=0; nn<3; ++nn) {
-            node_period(B_f[nn], geom.periodicity());
-         }
+
+      // Boundary conditions
+      E_n.FillBoundary(geom.periodicity());
+      for (int nn=0; nn<3; ++nn) {
+         B_f[nn].FillBoundary(geom.periodicity());
+      }
+
+      // Make sure nodes in periodic data are also synced (fillboundary does not update "valid" nodes on edge, which will match those on other side of domain with periodic BCs)
+      // There (should) not be any reason why this will be violated at future time
+      // Data is identical as it is shared across boundaries
+      // Only(?) question is if calculations are done in same order
+      E_n.EnforcePeriodicity(geom.periodicity());
+      for (int nn=0; nn<3; ++nn) {
+         B_f[nn].EnforcePeriodicity(geom.periodicity());
+      }
+
+      // std::unique_ptr<iMultiFab>
+      //    omask_fx_ghost(B_f[0], geom.periodicity(), vectghost),
+      //    omask_fy_ghost(B_f[1], geom.periodicity(), vectghost),
+      //    omask_fz_ghost(B_f[2], geom.periodicity(), vectghost),
+      //    omask_n_ghost(E_n, geom.periodicity(), vectghost);
+
+      E_n.OverrideSync(geom.periodicity());
+      for (int nn=0; nn<3; ++nn) {
+         B_f[nn].OverrideSync(geom.periodicity());
       }
       
-      // Complete boundary conditions
+      // Ensure boundary conditions were not violated in last step
       E_n.FillBoundary(geom.periodicity());
       for (int nn=0; nn<3; ++nn) {
          B_f[nn].FillBoundary(geom.periodicity());
@@ -445,14 +431,51 @@ int main(int argc, char* argv[]) {
             total_n = len_n[0]*len_n[1]*len_n[2],
             total_n_ghost = len_n_ghost[0]*len_n_ghost[1]*len_n_ghost[2];
          
-         const std::array<sp_matrix<Real>,3> operator_curl_B2E = get_curl_f2n_operator_sparse(bx_n, nghost, dx);
-         const std::array<sp_matrix<Real>,3> operator_curl_E2B = get_curl_n2f_operator_sparse(bx_n, nghost, dx);
+         const Box&
+            bx_fx_B2E = grow(convert(bx_n,AMReXConst::btype_fx), nghost),
+            bx_fy_B2E = grow(convert(bx_n,AMReXConst::btype_fy), nghost),
+            bx_fz_B2E = grow(convert(bx_n,AMReXConst::btype_fz), nghost),
+            bx_n_B2E = convert(bx_n,AMReXConst::btype_n),
+            bx_fx_E2B = convert(bx_n,AMReXConst::btype_fx),
+            bx_fy_E2B = convert(bx_n,AMReXConst::btype_fy),
+            bx_fz_E2B = convert(bx_n,AMReXConst::btype_fz),
+            bx_n_E2B = grow(convert(bx_n,AMReXConst::btype_n), nghost);
+   
+         const IntVect
+            len_fx_B2E = bx_fx_B2E.length(),
+            len_fy_B2E = bx_fy_B2E.length(),
+            len_fz_B2E = bx_fz_B2E.length(),
+            len_n_B2E = bx_n_B2E.length(),
+            len_fx_E2B = bx_fx_E2B.length(),
+            len_fy_E2B = bx_fy_E2B.length(),
+            len_fz_E2B = bx_fz_E2B.length(),
+            len_n_E2B = bx_n_E2B.length();
+   
+         const int
+            total_fx_B2E = math::product(len_fx_B2E),
+            total_fy_B2E = math::product(len_fy_B2E),
+            total_fz_B2E = math::product(len_fz_B2E),
+            total_n_B2E = math::product(len_n_B2E),
+            total_fx_E2B = math::product(len_fx_E2B),
+            total_fy_E2B = math::product(len_fy_E2B),
+            total_fz_E2B = math::product(len_fz_E2B),
+            total_n_E2B = math::product(len_n_E2B);
          
-         for (int ii=0; ii<3; ++ii) {
-            matA_B2E[ii][mfi] = operator_curl_B2E[ii];
-            matA_E2B[ii][mfi] = operator_curl_E2B[ii];
-         }
+         constexpr int
+            cols_per_row_B2E = 4,
+            cols_per_row_E2B = 8;
+         
+         matA_B2E[0][mfi] = sp_matrix<Real>(2*cols_per_row_B2E*total_n_B2E, 3*total_n_B2E, total_fx_B2E);
+         matA_B2E[1][mfi] = sp_matrix<Real>(2*cols_per_row_B2E*total_n_B2E, 3*total_n_B2E, total_fy_B2E);
+         matA_B2E[2][mfi] = sp_matrix<Real>(2*cols_per_row_B2E*total_n_B2E, 3*total_n_B2E, total_fz_B2E);
 
+         matA_E2B[0][mfi] = sp_matrix<Real>(cols_per_row_E2B*total_fx_E2B, total_fx_E2B, 3*total_n_E2B);
+         matA_E2B[1][mfi] = sp_matrix<Real>(cols_per_row_E2B*total_fy_E2B, total_fy_E2B, 3*total_n_E2B);
+         matA_E2B[2][mfi] = sp_matrix<Real>(cols_per_row_E2B*total_fz_E2B, total_fz_E2B, 3*total_n_E2B);
+         
+         get_curl_f2n_operator_sparse(matA_B2E[0][mfi], matA_B2E[1][mfi], matA_B2E[2][mfi], bx_n, nghost, dx);
+         get_curl_n2f_operator_sparse(matA_E2B[0][mfi], matA_E2B[1][mfi], matA_E2B[2][mfi], bx_n, nghost, dx);
+         
          // matA_E2E[mfi] = matrix<Real>(total_n_ghost, total_n, 0.0);
          matA_E2E[mfi] = sp_matrix<Real>(27*total_n_ghost, total_n_ghost, total_n);
          
@@ -571,12 +594,17 @@ int main(int argc, char* argv[]) {
             const std::string& pltfile = amrex::Concatenate("plt", step, 5);
             
             MultiFab plt_Fab(ba_c, dm, 9, nghost);
+
+            B_c.setVal(0.0);
+            E_c.setVal(0.0);
             
             B_c = face2cell(B_f);
             E_c = node2cell(E_n);
             
             B_c.FillBoundary(geom.periodicity());
             E_c.FillBoundary(geom.periodicity());
+
+            Energy_c.setVal(0.0);
             
             Energy_c = compute_EM_energy(B_c,E_c);
 
@@ -600,6 +628,8 @@ int main(int argc, char* argv[]) {
                     << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_B_energy
                     << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_E_energy
                     << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_EM_energy << std::endl;
+
+            plt_Fab.setVal(0.0);
             
             MultiFab::Copy(plt_Fab, B_c, 0, 0, 3, nghost);
             MultiFab::Copy(plt_Fab, E_c, 0, 3, 3, nghost);
@@ -621,12 +651,20 @@ int main(int argc, char* argv[]) {
          for (int nn=0; nn<3; ++nn) {
             B_f[nn].FillBoundary(geom.periodicity());
          }
+
+         E_n.OverrideSync(geom.periodicity());
+         for (int nn=0; nn<3; ++nn) {
+            B_f[nn].OverrideSync(geom.periodicity());
+         }
          
          time += dt;
       }
       const std::string& pltfile = amrex::Concatenate("plt", steps, 5);
       
       MultiFab plt_Fab(ba_c, dm, 9, nghost);
+
+      B_c.setVal(0.0);
+      E_c.setVal(0.0);
       
       B_c = face2cell(B_f);
       E_c = node2cell(E_n);
@@ -634,6 +672,8 @@ int main(int argc, char* argv[]) {
       B_c.FillBoundary(geom.periodicity());
       E_c.FillBoundary(geom.periodicity());
 
+      Energy_c.setVal(0.0);
+      
       Energy_c = compute_EM_energy(B_c,E_c);
 
       Real
@@ -656,6 +696,8 @@ int main(int argc, char* argv[]) {
               << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_B_energy
               << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_E_energy
               << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_EM_energy << std::endl;
+
+      plt_Fab.setVal(0.0);
       
       MultiFab::Copy(plt_Fab, B_c, 0, 0, 3, nghost);
       MultiFab::Copy(plt_Fab, E_c, 0, 3, 3, nghost);

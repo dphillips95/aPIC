@@ -68,11 +68,14 @@ void gmres_step(std::array<MultiFab,3>& B_f, MultiFab& E_n, GpuArray<Real,3> dx,
    BE::Copy(b, x, 0);
    
    // Calculate curls of initial state; no ghost cells needed
-   curl_n2f(curl_En, E_n, dx);
-   curl_f2n(curl_Bf, B_f, dx);
+   // curl_n2f(curl_En, E_n, dx);
+   // curl_f2n(curl_Bf, B_f, dx);
    
-   b.Saxpy_B(b, curl_En, -dt*(1-theta));
-   b.Saxpy_En(b, curl_Bf, math::square(PhysConst::c)*dt*(1-theta));
+   // BE::Saxpy_B(b, curl_En, -dt*(1-theta));
+   // BE::Saxpy_En(b, curl_Bf, math::square(PhysConst::c)*dt*(1-theta));
+
+   curl_n2f(b.getB_fx(), b.getB_fy(), b.getB_fz(), E_n, dx, -dt*(1-theta));
+   curl_f2n(b.getE_n(), B_f, dx, math::square(PhysConst::c)*dt*(1-theta));
    
    linop gmres_operator(E_n.boxArray(), E_n.distributionMap, E_n.n_grow[0], dx, dt*theta, period);
    
@@ -309,8 +312,7 @@ matrix<Real> get_curl_n2f_operator(const Box& bx, const int nghost, const GpuArr
 // This function only needs to be computed once per box so speed is not that important
 // This function returns three separate matrices for the three components of B_f in the input x of Ax
 // NB: The box passed should not contain ghost cells
-std::array<matrix<Real>,3> get_curl_f2n_operator(const Box& bx, const int nghost, const GpuArray<Real,3>& dx) {
-
+void get_curl_f2n_operator(matrix<Real>& curl_x, matrix<Real>& curl_y, matrix<Real>& curl_z, const Box& bx, const int nghost, const GpuArray<Real,3>& dx) {
    const Real
       grad_x = 1/(2*dx[0]),
       grad_y = 1/(2*dx[1]),
@@ -328,17 +330,7 @@ std::array<matrix<Real>,3> get_curl_f2n_operator(const Box& bx, const int nghost
       len_fz = bx_fz.length(),
       len_n = bx_n.length();
    
-   const int
-      total_fx = math::product(len_fx),
-      total_fy = math::product(len_fy),
-      total_fz = math::product(len_fz),
-      total_n = math::product(len_n);
-   
-   std::array<matrix<Real>,3> ret = {
-      matrix<Real>(3*total_n, total_fx, 0.0),
-      matrix<Real>(3*total_n, total_fy, 0.0),
-      matrix<Real>(3*total_n, total_fz, 0.0)
-   };
+   const int total_n = math::product(len_n);
    
    ParallelFor(bx_n, [&](int ii, int jj, int kk) {
       // Coords of node and adjacent faces
@@ -377,42 +369,39 @@ std::array<matrix<Real>,3> get_curl_f2n_operator(const Box& bx, const int nghost
          fzID_110 = get_cellID(cell_110, len_fz, nghost);
       
       // x-component of curl
-      ret[1](nxID_000, fyID_101) += grad_z;
-      ret[1](nxID_000, fyID_100) -= grad_z;
-      ret[2](nxID_000, fzID_100) += grad_y;
-      ret[2](nxID_000, fzID_110) -= grad_y;
-      ret[1](nxID_000, fyID_001) += grad_z;
-      ret[1](nxID_000, fyID_000) -= grad_z;
-      ret[2](nxID_000, fzID_000) += grad_y;
-      ret[2](nxID_000, fzID_010) -= grad_y;
+      curl_y(nxID_000, fyID_101) += grad_z;
+      curl_y(nxID_000, fyID_100) -= grad_z;
+      curl_z(nxID_000, fzID_100) += grad_y;
+      curl_z(nxID_000, fzID_110) -= grad_y;
+      curl_y(nxID_000, fyID_001) += grad_z;
+      curl_y(nxID_000, fyID_000) -= grad_z;
+      curl_z(nxID_000, fzID_000) += grad_y;
+      curl_z(nxID_000, fzID_010) -= grad_y;
       // y-component of curl
-      ret[2](nyID_000, fzID_110) += grad_x;
-      ret[2](nyID_000, fzID_010) -= grad_x;
-      ret[0](nyID_000, fxID_010) += grad_z;
-      ret[0](nyID_000, fxID_011) -= grad_z;
-      ret[2](nyID_000, fzID_100) += grad_x;
-      ret[2](nyID_000, fzID_000) -= grad_x;
-      ret[0](nyID_000, fxID_000) += grad_z;
-      ret[0](nyID_000, fxID_001) -= grad_z;
+      curl_z(nyID_000, fzID_110) += grad_x;
+      curl_z(nyID_000, fzID_010) -= grad_x;
+      curl_x(nyID_000, fxID_010) += grad_z;
+      curl_x(nyID_000, fxID_011) -= grad_z;
+      curl_z(nyID_000, fzID_100) += grad_x;
+      curl_z(nyID_000, fzID_000) -= grad_x;
+      curl_x(nyID_000, fxID_000) += grad_z;
+      curl_x(nyID_000, fxID_001) -= grad_z;
       // z-component of curl
-      ret[0](nzID_000, fxID_011) += grad_y;
-      ret[0](nzID_000, fxID_001) -= grad_y;
-      ret[1](nzID_000, fyID_001) += grad_x;
-      ret[1](nzID_000, fyID_101) -= grad_x;
-      ret[0](nzID_000, fxID_010) += grad_y;
-      ret[0](nzID_000, fxID_000) -= grad_y;
-      ret[1](nzID_000, fyID_000) += grad_x;
-      ret[1](nzID_000, fyID_100) -= grad_x;
+      curl_x(nzID_000, fxID_011) += grad_y;
+      curl_x(nzID_000, fxID_001) -= grad_y;
+      curl_y(nzID_000, fyID_001) += grad_x;
+      curl_y(nzID_000, fyID_101) -= grad_x;
+      curl_x(nzID_000, fxID_010) += grad_y;
+      curl_x(nzID_000, fxID_000) -= grad_y;
+      curl_y(nzID_000, fyID_000) += grad_x;
+      curl_y(nzID_000, fyID_100) -= grad_x;
    });
-   
-   return ret;
 }
 
 // Compute the curl operator for a given box from nodes to faces
 // This function only needs to be computed once per box so speed is not that important
 // NB: The box passed should not contain ghost cells
-std::array<matrix<Real>,3> get_curl_n2f_operator(const Box& bx, const int nghost, const GpuArray<Real,3>& dx) {
-
+void get_curl_n2f_operator(matrix<Real>& curl_x, matrix<Real>& curl_y, matrix<Real>& curl_z, const Box& bx, const int nghost, const GpuArray<Real,3>& dx) {
    const Real
       grad_x = 1/(2*dx[0]),
       grad_y = 1/(2*dx[1]),
@@ -430,17 +419,7 @@ std::array<matrix<Real>,3> get_curl_n2f_operator(const Box& bx, const int nghost
       len_fz = bx_fz.length(),
       len_n = bx_n.length();
    
-   const int
-      total_fx = math::product(len_fx),
-      total_fy = math::product(len_fy),
-      total_fz = math::product(len_fz),
-      total_n = math::product(len_n);
-   
-   std::array<matrix<Real>,3> ret = {
-      matrix<Real>(total_fx, 3*total_n, 0.0),
-      matrix<Real>(total_fy, 3*total_n, 0.0),
-      matrix<Real>(total_fz, 3*total_n, 0.0)
-   };
+   const int total_n = math::product(len_n);
    
    ParallelFor(bx_fx, [&](int ii, int jj, int kk) {
       const IntVect
@@ -465,14 +444,14 @@ std::array<matrix<Real>,3> get_curl_n2f_operator(const Box& bx, const int nghost
          nzID_010 = nyID_010 + total_n,
          nzID_011 = nyID_011 + total_n;
          
-      ret[0](fxID_000, nyID_000) += grad_z;
-      ret[0](fxID_000, nyID_010) += grad_z;
-      ret[0](fxID_000, nzID_010) += grad_y;
-      ret[0](fxID_000, nzID_011) += grad_y;
-      ret[0](fxID_000, nyID_011) -= grad_z;
-      ret[0](fxID_000, nyID_001) -= grad_z;
-      ret[0](fxID_000, nzID_001) -= grad_y;
-      ret[0](fxID_000, nzID_000) -= grad_y;
+      curl_x(fxID_000, nyID_000) += grad_z;
+      curl_x(fxID_000, nyID_010) += grad_z;
+      curl_x(fxID_000, nzID_010) += grad_y;
+      curl_x(fxID_000, nzID_011) += grad_y;
+      curl_x(fxID_000, nyID_011) -= grad_z;
+      curl_x(fxID_000, nyID_001) -= grad_z;
+      curl_x(fxID_000, nzID_001) -= grad_y;
+      curl_x(fxID_000, nzID_000) -= grad_y;
    });
 
    ParallelFor(bx_fy, [&](int ii, int jj, int kk) {
@@ -498,14 +477,14 @@ std::array<matrix<Real>,3> get_curl_n2f_operator(const Box& bx, const int nghost
          nzID_100 = nxID_100 + 2*total_n,
          nzID_101 = nxID_101 + 2*total_n;
       
-      ret[1](fyID_000, nzID_000) += grad_x;
-      ret[1](fyID_000, nzID_001) += grad_x;
-      ret[1](fyID_000, nxID_001) += grad_z;
-      ret[1](fyID_000, nxID_101) += grad_z;
-      ret[1](fyID_000, nzID_101) -= grad_x;
-      ret[1](fyID_000, nzID_100) -= grad_x;
-      ret[1](fyID_000, nxID_100) -= grad_z;
-      ret[1](fyID_000, nxID_000) -= grad_z;
+      curl_y(fyID_000, nzID_000) += grad_x;
+      curl_y(fyID_000, nzID_001) += grad_x;
+      curl_y(fyID_000, nxID_001) += grad_z;
+      curl_y(fyID_000, nxID_101) += grad_z;
+      curl_y(fyID_000, nzID_101) -= grad_x;
+      curl_y(fyID_000, nzID_100) -= grad_x;
+      curl_y(fyID_000, nxID_100) -= grad_z;
+      curl_y(fyID_000, nxID_000) -= grad_z;
    });
    
    ParallelFor(bx_fz, [&](int ii, int jj, int kk) {
@@ -531,25 +510,23 @@ std::array<matrix<Real>,3> get_curl_n2f_operator(const Box& bx, const int nghost
          nyID_100 = nxID_100 + total_n,
          nyID_110 = nxID_110 + total_n;
       
-      ret[2](fzID_000, nxID_000) += grad_y;
-      ret[2](fzID_000, nxID_100) += grad_y;
-      ret[2](fzID_000, nyID_100) += grad_x;
-      ret[2](fzID_000, nyID_110) += grad_x;
-      ret[2](fzID_000, nxID_110) -= grad_y;
-      ret[2](fzID_000, nxID_010) -= grad_y;
-      ret[2](fzID_000, nyID_010) -= grad_x;
-      ret[2](fzID_000, nyID_000) -= grad_x;
+      curl_z(fzID_000, nxID_000) += grad_y;
+      curl_z(fzID_000, nxID_100) += grad_y;
+      curl_z(fzID_000, nyID_100) += grad_x;
+      curl_z(fzID_000, nyID_110) += grad_x;
+      curl_z(fzID_000, nxID_110) -= grad_y;
+      curl_z(fzID_000, nxID_010) -= grad_y;
+      curl_z(fzID_000, nyID_010) -= grad_x;
+      curl_z(fzID_000, nyID_000) -= grad_x;
    });
-   
-   return ret;
 }
 
 // Compute the curl operator for a given box from faces to nodes
 // This function only needs to be computed once per box so speed is not that important
 // This function returns three separate sparse matrices for the three components of B_f in the input x of Ax
 // NB: The box passed should not contain ghost cells
-std::array<sp_matrix<Real>,3> get_curl_f2n_operator_sparse(const Box& bx, const int nghost, const GpuArray<Real,3>& dx) {
-
+void get_curl_f2n_operator_sparse(sp_matrix<Real>& curl_x, sp_matrix<Real>& curl_y, sp_matrix<Real>& curl_z, const Box& bx, const int nghost, const GpuArray<Real,3>& dx) {
+   
    const Real
       grad_x = 1/(2*dx[0]),
       grad_y = 1/(2*dx[1]),
@@ -567,11 +544,7 @@ std::array<sp_matrix<Real>,3> get_curl_f2n_operator_sparse(const Box& bx, const 
       len_fz = bx_fz.length(),
       len_n = bx_n.length();
    
-   const int
-      total_fx = math::product(len_fx),
-      total_fy = math::product(len_fy),
-      total_fz = math::product(len_fz),
-      total_n = math::product(len_n);
+   const int total_n = math::product(len_n);
    
    // *_xy, first dim "x" indicates component of B (thus different matrices), second dim "y" indicates component of E (thus different chunk of matrix)
    // These never match as B_i does not affect E_i
@@ -728,35 +701,24 @@ std::array<sp_matrix<Real>,3> get_curl_f2n_operator_sparse(const Box& bx, const 
       col_indices_yz.push_back(fyID_100);
       col_indices_yz.push_back(fyID_000);
    });
-
-   std::array<sp_matrix<Real>,3> ret = {
-      sp_matrix<Real>(2*cols_per_row*total_n, 3*total_n, total_fx),
-      sp_matrix<Real>(2*cols_per_row*total_n, 3*total_n, total_fy),
-      sp_matrix<Real>(2*cols_per_row*total_n, 3*total_n, total_fz)
-   };
-
-   // ret[0].add_rows(total_n);
-   ret[0].add_chunk(dat_xy, row_indices_xy, col_indices_xy);
-   ret[0].add_chunk(dat_xz, row_indices_xz, col_indices_xz);
-   ret[0].finalise();
    
-   ret[1].add_chunk(dat_yx, row_indices_yx, col_indices_yx);
-   // ret[1].add_rows(total_n);
-   ret[1].add_chunk(dat_yz, row_indices_yz, col_indices_yz);
-   ret[1].finalise();
+   curl_x.add_chunk(dat_xy, row_indices_xy, col_indices_xy);
+   curl_x.add_chunk(dat_xz, row_indices_xz, col_indices_xz);
+   curl_x.finalise();
    
-   ret[2].add_chunk(dat_zx, row_indices_zx, col_indices_zx);
-   ret[2].add_chunk(dat_zy, row_indices_zy, col_indices_zy);
-   ret[2].finalise();
-   // ret[2].add_rows(total_n);
+   curl_y.add_chunk(dat_yx, row_indices_yx, col_indices_yx);
+   curl_y.add_chunk(dat_yz, row_indices_yz, col_indices_yz);
+   curl_y.finalise();
    
-   return ret;
+   curl_z.add_chunk(dat_zx, row_indices_zx, col_indices_zx);
+   curl_z.add_chunk(dat_zy, row_indices_zy, col_indices_zy);
+   curl_z.finalise();
 }
 
 // Compute the curl operator for a given box from nodes to faces
 // This function only needs to be computed once per box so speed is not that important
 // NB: The box passed should not contain ghost cells
-std::array<sp_matrix<Real>,3> get_curl_n2f_operator_sparse(const Box& bx, const int nghost, const GpuArray<Real,3>& dx) {
+void get_curl_n2f_operator_sparse(sp_matrix<Real>& curl_x, sp_matrix<Real>& curl_y, sp_matrix<Real>& curl_z, const Box& bx, const int nghost, const GpuArray<Real,3>& dx) {
 
    const Real
       grad_x = 1/(2*dx[0]),
@@ -785,7 +747,10 @@ std::array<sp_matrix<Real>,3> get_curl_n2f_operator_sparse(const Box& bx, const 
    // 8 values of E_j in neighbouring nodes affect the local B_i
    constexpr int cols_per_row = 8;
    
-   std::vector<Real> dat_x, dat_y, dat_z;
+   std::vector<Real>
+      dat_x,
+      dat_y,
+      dat_z;
    std::vector<int>
       row_indices_x, col_indices_x,
       row_indices_y, col_indices_y,
@@ -935,43 +900,9 @@ std::array<sp_matrix<Real>,3> get_curl_n2f_operator_sparse(const Box& bx, const 
       col_indices_z.push_back(nyID_110);
    });
 
-   std::array<sp_matrix<Real>,3> ret = {
-      sp_matrix<Real>(cols_per_row*total_fx, total_fx, 3*total_n),
-      sp_matrix<Real>(cols_per_row*total_fy, total_fy, 3*total_n),
-      sp_matrix<Real>(cols_per_row*total_fz, total_fz, 3*total_n)
-   };
-
-   ret[0].add_chunk(dat_x, row_indices_x, col_indices_x);
-   ret[1].add_chunk(dat_y, row_indices_y, col_indices_y);
-   ret[2].add_chunk(dat_z, row_indices_z, col_indices_z);
-   
-   return ret;
-}
-
-// Get cell (or node etc.) ID from given cell indices of cell in box
-// If the box has ghost cells then index needs to be shifted to accomodate
-int get_cellID(int x_index, int y_index, int z_index, const IntVect& len, int nghost) {
-   x_index += nghost;
-   y_index += nghost;
-   z_index += nghost;
-   return (z_index*len[1] + y_index)*len[0] + x_index;
-}
-
-// Get cell (or node etc.) ID from given cell indices of cell in box
-// If the box has ghost cells then index needs to be shifted to accomodate
-int get_cellID(IntVect cell_indices, const IntVect& len, int nghost) {
-   cell_indices += nghost;
-   return get_cellID(cell_indices[0], cell_indices[1], cell_indices[2], len);
-}
-
-// Get cell (or node etc.) indices of cell in box given cell ID
-// If the box has ghost cells then index needs to be shifted to accomodate
-IntVect get_cell_indices(int cellID, const IntVect& len, int nghost) {
-   int
-      x_index = cellID%len[0]          - nghost,
-      y_index = (cellID/len[0])%len[1] - nghost,
-      z_index = cellID/(len[0]*len[1]) - nghost;
-   return IntVect(x_index,y_index,z_index);
+   curl_x.add_chunk(dat_x, row_indices_x, col_indices_x);
+   curl_y.add_chunk(dat_y, row_indices_y, col_indices_y);
+   curl_z.add_chunk(dat_z, row_indices_z, col_indices_z);
 }
 
 /*

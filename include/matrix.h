@@ -42,6 +42,12 @@ public:
    matrix(size_t n, size_t m) : m_nrows(n), m_ncols(m), m_dat(n*m) {}
    
    matrix(size_t n, size_t m, T val) : m_nrows(n), m_ncols(m), m_dat(n*m, val) {}
+
+   // matrix(const matrix<T>&) = delete;
+   // matrix<T>& operator=(const matrix<T>&) = delete;
+
+   // matrix(matrix<T>&&) = default;
+   // matrix<T>& operator=(matrix<T>&&) = default;
    
    T& operator()(size_t ii, size_t jj) { return m_dat[ii*m_ncols + jj]; }
    

@@ -36,8 +36,6 @@ using namespace amrex;
 // Interpolators: Node to Cell - Value in cell centre is calculated as average of value at all 8 nodes
 void node2cell(MultiFab& cell_data, const MultiFab& node_data) {
    int nvar = node_data.nComp();
-
-   cell_data.setVal(0.0);
    
    for (MFIter mfi(cell_data); mfi.isValid(); ++mfi) {
       const Box& bx_c = mfi.validbox();
@@ -60,9 +58,6 @@ void node2cell(MultiFab& cell_data, const MultiFab& node_data) {
 
 // Interpolators: Face to Cell - Each face stores single component of vector perpendicular to face; cell centre data is calculated as average in each component of the two faces of the cell containing the given component
 void face2cell(MultiFab& cell_data, const MultiFab& xface_data, const MultiFab& yface_data, const MultiFab& zface_data) {
-   
-   cell_data.setVal(0.0);
-   
    for (MFIter mfi(cell_data); mfi.isValid(); ++mfi) {
       const Box& bx_c = mfi.validbox();
       const Array4<const Real>&
@@ -81,10 +76,6 @@ void face2cell(MultiFab& cell_data, const MultiFab& xface_data, const MultiFab& 
 
 // Interpolators: Node to Edge - Edge data stores single component of vector data parallel to edge; edge data is calculated as average of given component from nodes at either end of edge
 void node2edge(MultiFab& xedge_data, MultiFab& yedge_data, MultiFab& zedge_data, const MultiFab& node_data) {
-   xedge_data.setVal(0.0);
-   yedge_data.setVal(0.0);
-   zedge_data.setVal(0.0);
-   
    for (MFIter mfi(xedge_data); mfi.isValid(); ++mfi) {
       const Box&
          bx_ex = mfi.tilebox(AMReXConst::btype_ex),
@@ -113,8 +104,6 @@ void node2edge(MultiFab& xedge_data, MultiFab& yedge_data, MultiFab& zedge_data,
 // Diagnostics: Compute cell Magnetic and Electric energy - Output is MultiFab with three components - B energy, E energy, Total energy
 // TODO: Add Particle kinetic energies after particles added
 void compute_EM_energy(MultiFab& Energy_c, const MultiFab& B_c, const MultiFab& E_c) {
-   Energy_c.setVal(0.0);
-   
    for (MFIter mfi(Energy_c); mfi.isValid(); ++mfi) {
       const Box& bx_c = mfi.fabbox();
       const Array4<const Real>&
@@ -134,67 +123,8 @@ void compute_EM_energy(MultiFab& Energy_c, const MultiFab& B_c, const MultiFab& 
    }
 }
 
-// Boundaries: Fix Nodal Periodicity - Fixes nodal data (i.e. face, edge or node data) for periodic BCs so that final 'valid' node is equal to first 'valid' node
-// i.e. AMReX stores all nodes neighbouring valid cells
-// and with periodic BCs cells on opposite sides of the domain are actually neighbours
-// Hence the outer nodes of these cells are actually the same nodes
-// Theoretically should only be necessary to correct initial conditions,
-// (and possibly when mesh refining/generating new boxes)
-// If this is violated during the run then a bug in the code is responsible
-void node_period(MultiFab& mf, const Periodicity& period) {
-   int nvar = mf.nComp();
-   
-   for (MFIter mfi(mf); mfi.isValid(); ++mfi) {
-      const Box&
-         bx = mfi.validbox(),
-         bx_full = mfi.fabbox();
-      const Array4<Real>& mf_array = mf.array(mfi);
-      const Dim3&
-         int_valid_min = lbound(bx),
-         int_valid_max = ubound(bx),
-         int_min = lbound(bx_full),
-         int_max = ubound(bx_full);
-      
-      const IntVect& btype = bx.type();
-      
-      if (period.isPeriodic(0) && btype[0] == 1) {
-         for (int jj=int_min.y; jj<int_max.y; ++jj) {
-            for (int kk=int_min.z; kk<int_max.z; ++kk) {
-               for (int nn=0; nn<nvar; ++nn) {
-                  mf_array(int_valid_max.x,jj,kk,nn) = mf_array(int_valid_min.x,jj,kk,nn);
-               }
-            }
-         }
-      }
-      
-      if (period.isPeriodic(1) && btype[1] == 1) {
-         for (int ii=int_min.x; ii<int_max.x; ++ii) {
-            for (int kk=int_min.z; kk<int_max.z; ++kk) {
-               for (int nn=0; nn<nvar; ++nn) {
-                  mf_array(ii,int_valid_max.y,kk,nn) = mf_array(ii,int_valid_min.y,kk,nn);
-               }
-            }
-         }
-      }
-      
-      if (period.isPeriodic(2) && btype[2] == 1) {
-         for (int ii=int_min.x; ii<int_max.x; ++ii) {
-            for (int jj=int_min.y; jj<int_max.y; ++jj) {
-               for (int nn=0; nn<nvar; ++nn) {
-                  mf_array(ii,jj,int_valid_max.z,nn) = mf_array(ii,jj,int_valid_min.z,nn);
-               }
-            }
-         }
-      }
-   }
-}
-
 // Derivative operators: Curl Edge to Face - Curl is calculated at face centres using edges surrounding face
 void curl_e2f(MultiFab& xface_curl, MultiFab& yface_curl, MultiFab& zface_curl, const MultiFab& xedge_data, const MultiFab& yedge_data, const MultiFab& zedge_data, const GpuArray<Real,3>& dx) {
-   xface_curl.setVal(0.0);
-   yface_curl.setVal(0.0);
-   zface_curl.setVal(0.0);
-   
    for (MFIter mfi(xface_curl); mfi.isValid(); ++mfi) {
       const Box&
          bx_fx = mfi.tilebox(AMReXConst::btype_fx),
@@ -229,11 +159,7 @@ void curl_e2f(MultiFab& xface_curl, MultiFab& yface_curl, MultiFab& zface_curl, 
 // Derivative operators: Curl Node to Face - Curl is calculated at face centres using edges surrounding face; edge values are averaged from neighbours as in node2edge
 // Edge values are skipped, i.e. computes directly from node to face curl
 // This should therefore be equivalent to curl_e2f(node2edge(MF),dx)
-void curl_n2f(MultiFab& xface_curl, MultiFab& yface_curl, MultiFab& zface_curl, const MultiFab& node_data, const GpuArray<Real,3>& dx) {
-   xface_curl.setVal(0.0);
-   yface_curl.setVal(0.0);
-   zface_curl.setVal(0.0);
-   
+void curl_n2f(MultiFab& xface_curl, MultiFab& yface_curl, MultiFab& zface_curl, const MultiFab& node_data, const GpuArray<Real,3>& dx, Real fact) {
    for (MFIter mfi(xface_curl); mfi.isValid(); ++mfi) {
       const Box&
          bx_fx = mfi.tilebox(AMReXConst::btype_fx),
@@ -247,32 +173,30 @@ void curl_n2f(MultiFab& xface_curl, MultiFab& yface_curl, MultiFab& zface_curl, 
          fc_array_z = zface_curl.array(mfi);
       
       ParallelFor(bx_fx, [&](int ii, int jj, int kk) {
-         fc_array_x(ii,jj,kk) += (n_array(ii,  jj+1,kk,  2) + n_array(ii,  jj+1,kk+1,2))/(2*dx[1]);
-         fc_array_x(ii,jj,kk) -= (n_array(ii,  jj,  kk,  2) + n_array(ii,  jj,  kk+1,2))/(2*dx[1]);
-         fc_array_x(ii,jj,kk) -= (n_array(ii,  jj,  kk+1,1) + n_array(ii,  jj+1,kk+1,1))/(2*dx[2]);
-         fc_array_x(ii,jj,kk) += (n_array(ii,  jj,  kk,  1) + n_array(ii,  jj+1,kk,  1))/(2*dx[2]);
+         fc_array_x(ii,jj,kk) += fact*(n_array(ii,  jj+1,kk,  2) + n_array(ii,  jj+1,kk+1,2))/(2*dx[1]);
+         fc_array_x(ii,jj,kk) -= fact*(n_array(ii,  jj,  kk,  2) + n_array(ii,  jj,  kk+1,2))/(2*dx[1]);
+         fc_array_x(ii,jj,kk) -= fact*(n_array(ii,  jj,  kk+1,1) + n_array(ii,  jj+1,kk+1,1))/(2*dx[2]);
+         fc_array_x(ii,jj,kk) += fact*(n_array(ii,  jj,  kk,  1) + n_array(ii,  jj+1,kk,  1))/(2*dx[2]);
       });
       
       ParallelFor(bx_fy, [&](int ii, int jj, int kk) {
-         fc_array_y(ii,jj,kk) += (n_array(ii,  jj,  kk+1,0) + n_array(ii+1,jj,  kk+1,0))/(2*dx[2]);
-         fc_array_y(ii,jj,kk) -= (n_array(ii,  jj,  kk,  0) + n_array(ii+1,jj,  kk,  0))/(2*dx[2]);
-         fc_array_y(ii,jj,kk) -= (n_array(ii+1,jj,  kk,  2) + n_array(ii+1,jj,  kk+1,2))/(2*dx[0]);
-         fc_array_y(ii,jj,kk) += (n_array(ii,  jj,  kk,  2) + n_array(ii,  jj,  kk+1,2))/(2*dx[0]);
+         fc_array_y(ii,jj,kk) += fact*(n_array(ii,  jj,  kk+1,0) + n_array(ii+1,jj,  kk+1,0))/(2*dx[2]);
+         fc_array_y(ii,jj,kk) -= fact*(n_array(ii,  jj,  kk,  0) + n_array(ii+1,jj,  kk,  0))/(2*dx[2]);
+         fc_array_y(ii,jj,kk) -= fact*(n_array(ii+1,jj,  kk,  2) + n_array(ii+1,jj,  kk+1,2))/(2*dx[0]);
+         fc_array_y(ii,jj,kk) += fact*(n_array(ii,  jj,  kk,  2) + n_array(ii,  jj,  kk+1,2))/(2*dx[0]);
       });
       
       ParallelFor(bx_fz, [&](int ii, int jj, int kk) {
-         fc_array_z(ii,jj,kk) += (n_array(ii+1,jj,  kk,  1) + n_array(ii+1,jj+1,kk,  1))/(2*dx[0]);
-         fc_array_z(ii,jj,kk) -= (n_array(ii,  jj,  kk,  1) + n_array(ii,  jj+1,kk,  1))/(2*dx[0]);
-         fc_array_z(ii,jj,kk) -= (n_array(ii,  jj+1,kk,  0) + n_array(ii+1,jj+1,kk,  0))/(2*dx[1]);
-         fc_array_z(ii,jj,kk) += (n_array(ii,  jj,  kk,  0) + n_array(ii+1,jj,  kk,  0))/(2*dx[1]);
+         fc_array_z(ii,jj,kk) += fact*(n_array(ii+1,jj,  kk,  1) + n_array(ii+1,jj+1,kk,  1))/(2*dx[0]);
+         fc_array_z(ii,jj,kk) -= fact*(n_array(ii,  jj,  kk,  1) + n_array(ii,  jj+1,kk,  1))/(2*dx[0]);
+         fc_array_z(ii,jj,kk) -= fact*(n_array(ii,  jj+1,kk,  0) + n_array(ii+1,jj+1,kk,  0))/(2*dx[1]);
+         fc_array_z(ii,jj,kk) += fact*(n_array(ii,  jj,  kk,  0) + n_array(ii+1,jj,  kk,  0))/(2*dx[1]);
       });
    }
 }
 
 // Derivative operators: Curl Face to Node - Curl is calculated at nodes component-wise using faces adjacent each edge connecting to node
-void curl_f2n(MultiFab& node_curl, const MultiFab& xface_data, const MultiFab& yface_data, const MultiFab& zface_data, const GpuArray<Real,3>& dx) {
-   node_curl.setVal(0.0);
-   
+void curl_f2n(MultiFab& node_curl, const MultiFab& xface_data, const MultiFab& yface_data, const MultiFab& zface_data, const GpuArray<Real,3>& dx, Real fact) {
    for (MFIter mfi(node_curl); mfi.isValid(); ++mfi) {
       const Box& bx_n = mfi.validbox();
       const Array4<const Real>&
@@ -282,28 +206,26 @@ void curl_f2n(MultiFab& node_curl, const MultiFab& xface_data, const MultiFab& y
       const Array4<Real>& nc_array = node_curl.array(mfi);
       
       ParallelFor(bx_n, [&](int ii, int jj, int kk) {
-         nc_array(ii,jj,kk,0) -= (f_array_y(ii-1,jj,  kk  ) - f_array_y(ii-1,jj,  kk-1))/(2*dx[2]);
-         nc_array(ii,jj,kk,0) -= (f_array_y(ii,  jj,  kk  ) - f_array_y(ii,  jj,  kk-1))/(2*dx[2]);
-         nc_array(ii,jj,kk,0) += (f_array_z(ii-1,jj,  kk  ) - f_array_z(ii-1,jj-1,kk  ))/(2*dx[1]);
-         nc_array(ii,jj,kk,0) += (f_array_z(ii,  jj,  kk  ) - f_array_z(ii,  jj-1,kk  ))/(2*dx[1]);
+         nc_array(ii,jj,kk,0) -= fact*(f_array_y(ii-1,jj,  kk  ) - f_array_y(ii-1,jj,  kk-1))/(2*dx[2]);
+         nc_array(ii,jj,kk,0) -= fact*(f_array_y(ii,  jj,  kk  ) - f_array_y(ii,  jj,  kk-1))/(2*dx[2]);
+         nc_array(ii,jj,kk,0) += fact*(f_array_z(ii-1,jj,  kk  ) - f_array_z(ii-1,jj-1,kk  ))/(2*dx[1]);
+         nc_array(ii,jj,kk,0) += fact*(f_array_z(ii,  jj,  kk  ) - f_array_z(ii,  jj-1,kk  ))/(2*dx[1]);
 
-         nc_array(ii,jj,kk,1) -= (f_array_z(ii,  jj-1,kk  ) - f_array_z(ii-1,jj-1,kk  ))/(2*dx[0]);
-         nc_array(ii,jj,kk,1) -= (f_array_z(ii,  jj,  kk  ) - f_array_z(ii-1,jj,  kk  ))/(2*dx[0]);
-         nc_array(ii,jj,kk,1) += (f_array_x(ii,  jj-1,kk  ) - f_array_x(ii,  jj-1,kk-1))/(2*dx[2]);
-         nc_array(ii,jj,kk,1) += (f_array_x(ii,  jj,  kk  ) - f_array_x(ii,  jj,  kk-1))/(2*dx[2]);
+         nc_array(ii,jj,kk,1) -= fact*(f_array_z(ii,  jj-1,kk  ) - f_array_z(ii-1,jj-1,kk  ))/(2*dx[0]);
+         nc_array(ii,jj,kk,1) -= fact*(f_array_z(ii,  jj,  kk  ) - f_array_z(ii-1,jj,  kk  ))/(2*dx[0]);
+         nc_array(ii,jj,kk,1) += fact*(f_array_x(ii,  jj-1,kk  ) - f_array_x(ii,  jj-1,kk-1))/(2*dx[2]);
+         nc_array(ii,jj,kk,1) += fact*(f_array_x(ii,  jj,  kk  ) - f_array_x(ii,  jj,  kk-1))/(2*dx[2]);
 
-         nc_array(ii,jj,kk,2) -= (f_array_x(ii,  jj,  kk-1) - f_array_x(ii,  jj-1,kk-1))/(2*dx[1]);
-         nc_array(ii,jj,kk,2) -= (f_array_x(ii,  jj,  kk  ) - f_array_x(ii,  jj-1,kk  ))/(2*dx[1]);
-         nc_array(ii,jj,kk,2) += (f_array_y(ii,  jj,  kk-1) - f_array_y(ii-1,jj,  kk-1))/(2*dx[0]);
-         nc_array(ii,jj,kk,2) += (f_array_y(ii,  jj,  kk  ) - f_array_y(ii-1,jj,  kk  ))/(2*dx[0]);
+         nc_array(ii,jj,kk,2) -= fact*(f_array_x(ii,  jj,  kk-1) - f_array_x(ii,  jj-1,kk-1))/(2*dx[1]);
+         nc_array(ii,jj,kk,2) -= fact*(f_array_x(ii,  jj,  kk  ) - f_array_x(ii,  jj-1,kk  ))/(2*dx[1]);
+         nc_array(ii,jj,kk,2) += fact*(f_array_y(ii,  jj,  kk-1) - f_array_y(ii-1,jj,  kk-1))/(2*dx[0]);
+         nc_array(ii,jj,kk,2) += fact*(f_array_y(ii,  jj,  kk  ) - f_array_y(ii-1,jj,  kk  ))/(2*dx[0]);
       });
    }
 }
 
 // Derivative operators: Divergence Face to Centre - Divergence is calculated from face-centred data as the change across the cell in each face direction
 void div_f2c(MultiFab& cell_div, const MultiFab& xface_data, const MultiFab& yface_data, const MultiFab& zface_data, const GpuArray<Real,3>& dx) {
-   cell_div.setVal(0.0);
-   
    for (MFIter mfi(cell_div); mfi.isValid(); ++mfi) {
       const Box& bx_n = mfi.validbox();
       const Array4<const Real>&
@@ -322,8 +244,6 @@ void div_f2c(MultiFab& cell_div, const MultiFab& xface_data, const MultiFab& yfa
 
 // Derivative operators: Divergence Node to Centre - Divergence is calculated by first averaging node to face data (average of 4 nodes surrounding face) then applying the same rule as div_f2c
 void div_n2c(MultiFab& cell_div, const MultiFab& node_data, const GpuArray<Real,3>& dx) {
-   cell_div.setVal(0.0);
-   
    for (MFIter mfi(cell_div); mfi.isValid(); ++mfi) {
       const Box& bx_n = mfi.validbox();
       const Array4<const Real>& n_array = node_data.const_array(mfi);

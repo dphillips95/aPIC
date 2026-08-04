@@ -27,6 +27,7 @@ Author(s): David Phillips
 
 #include <AMReX_REAL.H>
 #include <AMReX_GMRES.H>
+#include <AMReX_iMultiFab.H>
 
 #include <cmath>
 
@@ -47,6 +48,10 @@ private:
    amrex::MultiFab m_B_fy;
    amrex::MultiFab m_B_fz;
    amrex::MultiFab m_E_n;
+   std::unique_ptr<amrex::iMultiFab> m_omask_Bfx;
+   std::unique_ptr<amrex::iMultiFab> m_omask_Bfy;
+   std::unique_ptr<amrex::iMultiFab> m_omask_Bfz;
+   std::unique_ptr<amrex::iMultiFab> m_omask_En;
 public:
    BE() {}
    
@@ -58,14 +63,28 @@ public:
       this->setVal(0.0);
 
       m_ba = convert(ba,AMReXConst::btype_c);
+
+      m_omask_Bfx = amrex::OwnerMask(m_B_fx, m_period, this->vectghost());
+      m_omask_Bfy = amrex::OwnerMask(m_B_fy, m_period, this->vectghost());
+      m_omask_Bfz = amrex::OwnerMask(m_B_fz, m_period, this->vectghost());
+      m_omask_En = amrex::OwnerMask(m_E_n, m_period, this->vectghost());
    }
-   
-   BE copy_dim(int nghost = -1) const {
-      // If number of ghost cells is not given (thus set to -1), copy from BE
-      if (nghost == -1) {
-         nghost = m_nghost;
-      }
-      
+
+   BE(const BE&) = delete;
+   BE& operator=(const BE&) = delete;
+
+   BE(BE&&) = default;
+   BE& operator=(BE&&) = default;
+
+   // Create new vector with matching structure
+   BE copy_dim() const {
+      BE new_BE(m_ba, m_dm, m_nghost, m_period);
+
+      return new_BE;
+   }
+
+   // Create new vector with matching structure, with different number of ghost cells
+   BE copy_dim(int nghost) const {
       BE new_BE(m_ba, m_dm, nghost, m_period);
       
       return new_BE;
@@ -99,6 +118,11 @@ public:
    
    // Return number of ghost cells
    int nghost() const { return m_nghost; }
+
+   // Return ghost cells as IntVect
+   amrex::IntVect vectghost() const {
+      return amrex::IntVect{m_nghost, m_nghost, m_nghost};
+   }
    
    static void Copy_Bfx(BE& lhs, const amrex::MultiFab& rhs) {
       amrex::MultiFab::Copy(lhs.m_B_fx, rhs, 0, 0, 1, rhs.nGrow());
@@ -145,23 +169,29 @@ public:
       m_B_fy.FillBoundary(m_period);
       m_B_fz.FillBoundary(m_period);
       m_E_n.FillBoundary(m_period);
+
+      // Match "valid" nodal data shared across boxes
+      m_B_fx.OverrideSync(m_period);
+      m_B_fy.OverrideSync(m_period);
+      m_B_fz.OverrideSync(m_period);
+      m_E_n.OverrideSync(m_period);
    }
    
    static amrex::Real dotProduct(const BE& v1, const BE& v2) {
-      amrex::Real dot_Bfx = amrex::MultiFab::Dot(v1.m_B_fx, 0, v2.m_B_fx, 0, 1, v1.nghost());
-      amrex::Real dot_Bfy = amrex::MultiFab::Dot(v1.m_B_fy, 0, v2.m_B_fy, 0, 1, v1.nghost());
-      amrex::Real dot_Bfz = amrex::MultiFab::Dot(v1.m_B_fz, 0, v2.m_B_fz, 0, 1, v1.nghost());
-      amrex::Real dot_En = amrex::MultiFab::Dot(v1.m_E_n, 0, v2.m_E_n, 0, 3, v1.nghost());
+      amrex::Real dot_Bfx = amrex::MultiFab::Dot(*v1.m_omask_Bfx, v1.m_B_fx, 0, v2.m_B_fx, 0, 1, v1.nghost());
+      amrex::Real dot_Bfy = amrex::MultiFab::Dot(*v1.m_omask_Bfy, v1.m_B_fy, 0, v2.m_B_fy, 0, 1, v1.nghost());
+      amrex::Real dot_Bfz = amrex::MultiFab::Dot(*v1.m_omask_Bfz, v1.m_B_fz, 0, v2.m_B_fz, 0, 1, v1.nghost());
+      amrex::Real dot_En = amrex::MultiFab::Dot(*v1.m_omask_En, v1.m_E_n, 0, v2.m_E_n, 0, 3, v1.nghost());
       
       // Rescale B and E with mu0 and eps0 to avoid bias
       return (dot_Bfx + dot_Bfy + dot_Bfz)/PhysConst::mu0 + dot_En*PhysConst::eps0;
    }
 
    static amrex::Real dotProduct(const BE& v1, const BE& v2, int nghost) {
-      amrex::Real dot_Bfx = amrex::MultiFab::Dot(v1.m_B_fx, 0, v2.m_B_fx, 0, 1, nghost);
-      amrex::Real dot_Bfy = amrex::MultiFab::Dot(v1.m_B_fy, 0, v2.m_B_fy, 0, 1, nghost);
-      amrex::Real dot_Bfz = amrex::MultiFab::Dot(v1.m_B_fz, 0, v2.m_B_fz, 0, 1, nghost);
-      amrex::Real dot_En = amrex::MultiFab::Dot(v1.m_E_n, 0, v2.m_E_n, 0, 3, nghost);
+      amrex::Real dot_Bfx = amrex::MultiFab::Dot(*v1.m_omask_Bfx, v1.m_B_fx, 0, v2.m_B_fx, 0, 1, nghost);
+      amrex::Real dot_Bfy = amrex::MultiFab::Dot(*v1.m_omask_Bfy, v1.m_B_fy, 0, v2.m_B_fy, 0, 1, nghost);
+      amrex::Real dot_Bfz = amrex::MultiFab::Dot(*v1.m_omask_Bfz, v1.m_B_fz, 0, v2.m_B_fz, 0, 1, nghost);
+      amrex::Real dot_En = amrex::MultiFab::Dot(*v1.m_omask_En, v1.m_E_n, 0, v2.m_E_n, 0, 3, nghost);
       
       // Rescale B and E with mu0 and eps0 to avoid bias
       return (dot_Bfx + dot_Bfy + dot_Bfz)/PhysConst::mu0 + dot_En*PhysConst::eps0;
@@ -241,10 +271,9 @@ public:
       const amrex::MultiFab& x_Bfz { x.getB_fz_const() };
       
       for (amrex::MFIter mfi(Ax_En); mfi.isValid(); ++mfi) {
-         const T&
-            matA_Bx2E_mf = matA_B2E[0][mfi],
-            matA_By2E_mf = matA_B2E[1][mfi],
-            matA_Bz2E_mf = matA_B2E[2][mfi];
+         const T& matA_Bx2E_mf { matA_B2E[0][mfi] };
+         const T& matA_By2E_mf { matA_B2E[1][mfi] };
+         const T& matA_Bz2E_mf { matA_B2E[2][mfi] };
          
          amrex::FArrayBox&       Ax_En_data { Ax_En[mfi] };
          const amrex::FArrayBox& x_Bfx_data { x_Bfx[mfi] };
@@ -300,10 +329,9 @@ public:
       const amrex::MultiFab& x_En   { x.getE_n_const() };
       
       for (amrex::MFIter mfi(x_En); mfi.isValid(); ++mfi) {
-         const T&
-            matA_E2Bx_mf = matA_E2B[0][mfi],
-            matA_E2By_mf = matA_E2B[1][mfi],
-            matA_E2Bz_mf = matA_E2B[2][mfi];
+         const T& matA_E2Bx_mf { matA_E2B[0][mfi] };
+         const T& matA_E2By_mf { matA_E2B[1][mfi] };
+         const T& matA_E2Bz_mf { matA_E2B[2][mfi] };
          
          amrex::FArrayBox&       Ax_Bfx_data { Ax_Bfx[mfi] };
          amrex::FArrayBox&       Ax_Bfy_data { Ax_Bfy[mfi] };
@@ -373,6 +401,12 @@ public:
    using RT = amrex::Real;
    
    linop(const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, int nghost, const amrex::GpuArray<RT,3>& dx, RT tFactor, const amrex::Periodicity& period) : m_ba(convert(ba,AMReXConst::btype_c)), m_dm(dm), m_nghost(nghost), m_dx(dx), m_tFactor(tFactor), m_period(period) {}
+
+   linop(const linop&) = delete;
+   linop& operator=(const linop&) = delete;
+
+   linop(linop&&) = default;
+   linop& operator=(linop&&) = default;
    
    void setBoxArray(const amrex::BoxArray& ba) {
       m_ba = convert(ba,AMReXConst::btype_c);
@@ -401,6 +435,11 @@ public:
       };
       
       BE::Copy(Ax,x,0);
+
+      curl_Bf.setVal(0.0);
+      for (int nn=0; nn<3; ++nn) {
+         curl_En[nn].setVal(0.0);
+      }
       
       BL_PROFILE_VAR("gmres_curl_En()",TIMER_curl_En);
       curl_n2f(curl_En, x.getE_n_const(), m_dx);
@@ -481,6 +520,12 @@ public:
    using RT = amrex::Real;
    
    linop_matrix(const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, int nghost, const amrex::GpuArray<RT,3>& dx, RT tFactor, const amrex::Periodicity& period, const std::array<amrex::LayoutData<T>,3>& matA_B2E, const std::array<amrex::LayoutData<T>,3>& matA_E2B, const amrex::LayoutData<T> matA_E2E) : m_ba(convert(ba,AMReXConst::btype_c)), m_dm(dm), m_nghost(nghost), m_dx(dx), m_tFactor(tFactor), m_period(period), m_matA_B2E(matA_B2E), m_matA_E2B(matA_E2B), m_matA_E2E(matA_E2E) {}
+
+   linop_matrix(const linop_matrix&) = delete;
+   linop_matrix& operator=(const linop_matrix&) = delete;
+
+   linop_matrix(linop_matrix&&) = default;
+   linop_matrix& operator=(linop_matrix&&) = default;
    
    void setBoxArray(const amrex::BoxArray& ba) {
       m_ba = convert(ba,AMReXConst::btype_c);
@@ -509,7 +554,7 @@ public:
       };
       
       BE::Copy(Ax,x,0);
-
+      
       BL_PROFILE_VAR("apply_matrix_E2B()",TIMER_curl_En);
       BE::apply_matrix_E2B(Ax, x, m_matA_E2B, m_tFactor);
       BL_PROFILE_VAR_STOP(TIMER_curl_En);
@@ -607,11 +652,14 @@ void gmres_step_matrix(std::array<amrex::MultiFab,3>& B_f, amrex::MultiFab& E_n,
    BE::Copy(b, x, 0);
    
    // Calculate curls of initial state; no ghost cells needed
-   curl_n2f(curl_En, E_n, dx);
-   curl_f2n(curl_Bf, B_f, dx);
+   // curl_n2f(curl_En, E_n, dx);
+   // curl_f2n(curl_Bf, B_f, dx);
    
-   BE::Saxpy_B(b, curl_En, -dt*(1-theta));
-   BE::Saxpy_En(b, curl_Bf, math::square(PhysConst::c)*dt*(1-theta));
+   // BE::Saxpy_B(b, curl_En, -dt*(1-theta));
+   // BE::Saxpy_En(b, curl_Bf, math::square(PhysConst::c)*dt*(1-theta));
+   
+   curl_n2f(b.getB_fx(), b.getB_fy(), b.getB_fz(), E_n, dx, -dt*(1-theta));
+   curl_f2n(b.getE_n(), B_f, dx, math::square(PhysConst::c)*dt*(1-theta));
    
    linop_matrix<T> gmres_operator(E_n.boxArray(), E_n.distributionMap, E_n.n_grow[0], dx, dt*theta, period, matA_B2E, matA_E2B, matA_E2E);
    
@@ -716,14 +764,175 @@ void gmres_step_matrix(std::array<amrex::MultiFab,3>& B_f, amrex::MultiFab& E_n,
 
 void gmres_step(std::array<amrex::MultiFab,3>& B_f, amrex::MultiFab& E_n, amrex::GpuArray<amrex::Real,3> dx, amrex::Real dt, amrex::Real theta, amrex::Periodicity period, amrex::Real rtol, amrex::Real atol, int verbosity = 0);
 
-std::array<matrix<amrex::Real>,3> get_curl_f2n_operator(const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx);
-std::array<matrix<amrex::Real>,3> get_curl_n2f_operator(const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx);
+void get_curl_f2n_operator(matrix<amrex::Real>& curl_x, matrix<amrex::Real>& curl_y, matrix<amrex::Real>& curl_z, const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx);
+                           
+inline void get_curl_f2n_operator(std::array<matrix<amrex::Real>,3>& curl, const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx) {
+   get_curl_f2n_operator(curl[0], curl[1], curl[2], bx, nghost, dx);
+}
 
-std::array<sp_matrix<amrex::Real>,3> get_curl_f2n_operator_sparse(const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx);
-std::array<sp_matrix<amrex::Real>,3> get_curl_n2f_operator_sparse(const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx);
+inline std::array<matrix<amrex::Real>,3> get_curl_f2n_operator(const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx) {
+   const amrex::Box&
+      bx_fx = grow(convert(bx,AMReXConst::btype_fx), nghost),
+      bx_fy = grow(convert(bx,AMReXConst::btype_fy), nghost),
+      bx_fz = grow(convert(bx,AMReXConst::btype_fz), nghost),
+      bx_n = convert(bx,AMReXConst::btype_n);
+   
+   const amrex::IntVect
+      len_fx = bx_fx.length(),
+      len_fy = bx_fy.length(),
+      len_fz = bx_fz.length(),
+      len_n = bx_n.length();
+   
+   const int
+      total_fx = math::product(len_fx),
+      total_fy = math::product(len_fy),
+      total_fz = math::product(len_fz),
+      total_n = math::product(len_n);
+   
+   std::array<matrix<amrex::Real>,3> ret = {
+      matrix<amrex::Real>(3*total_n, total_fx, 0.0),
+      matrix<amrex::Real>(3*total_n, total_fy, 0.0),
+      matrix<amrex::Real>(3*total_n, total_fz, 0.0)
+   };
+   
+   get_curl_f2n_operator(ret, bx, nghost, dx);
+   
+   return ret;
+}
 
-int get_cellID(int x_index, int y_index, int z_index, const amrex::IntVect& len, int nghost = 0);
-int get_cellID(amrex::IntVect cell_indices, const amrex::IntVect& len, int nghost = 0);
-amrex::IntVect get_cell_indices(int cellID, const amrex::IntVect& len, int nghost = 0);
+void get_curl_n2f_operator(matrix<amrex::Real>& curl_x, matrix<amrex::Real>& curl_y, matrix<amrex::Real>& curl_z, const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx);
+
+inline void get_curl_n2f_operator(std::array<matrix<amrex::Real>,3>& curl, const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx) {
+   get_curl_n2f_operator(curl[0], curl[1], curl[2], bx, nghost, dx);
+}
+
+inline std::array<matrix<amrex::Real>,3> get_curl_n2f_operator(const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx) {
+   const amrex::Box&
+      bx_fx = convert(bx,AMReXConst::btype_fx),
+      bx_fy = convert(bx,AMReXConst::btype_fy),
+      bx_fz = convert(bx,AMReXConst::btype_fz),
+      bx_n = grow(convert(bx,AMReXConst::btype_n), nghost);
+   
+   const amrex::IntVect
+      len_fx = bx_fx.length(),
+      len_fy = bx_fy.length(),
+      len_fz = bx_fz.length(),
+      len_n = bx_n.length();
+   
+   const int
+      total_fx = math::product(len_fx),
+      total_fy = math::product(len_fy),
+      total_fz = math::product(len_fz),
+      total_n = math::product(len_n);
+   
+   std::array<matrix<amrex::Real>,3> ret = {
+      matrix<amrex::Real>(total_fx, 3*total_n, 0.0),
+      matrix<amrex::Real>(total_fy, 3*total_n, 0.0),
+      matrix<amrex::Real>(total_fz, 3*total_n, 0.0)
+   };
+   
+   get_curl_n2f_operator(ret, bx, nghost, dx);
+   
+   return ret;
+}
+
+void get_curl_f2n_operator_sparse(sp_matrix<amrex::Real>& curl_x, sp_matrix<amrex::Real>& curl_y, sp_matrix<amrex::Real>& curl_z, const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx);
+
+inline void get_curl_f2n_operator_sparse(std::array<sp_matrix<amrex::Real>,3>& curl, const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx) {
+   get_curl_f2n_operator_sparse(curl[0], curl[1], curl[2], bx, nghost, dx);
+}
+
+inline std::array<sp_matrix<amrex::Real>,3> get_curl_f2n_operator_sparse(const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx) {
+   const amrex::Box&
+      bx_fx = grow(convert(bx,AMReXConst::btype_fx), nghost),
+      bx_fy = grow(convert(bx,AMReXConst::btype_fy), nghost),
+      bx_fz = grow(convert(bx,AMReXConst::btype_fz), nghost),
+      bx_n = convert(bx,AMReXConst::btype_n);
+   
+   const amrex::IntVect
+      len_fx = bx_fx.length(),
+      len_fy = bx_fy.length(),
+      len_fz = bx_fz.length(),
+      len_n = bx_n.length();
+   
+   const int
+      total_fx = math::product(len_fx),
+      total_fy = math::product(len_fy),
+      total_fz = math::product(len_fz),
+      total_n = math::product(len_n);
+
+   constexpr int cols_per_row = 4;
+   
+   std::array<sp_matrix<amrex::Real>,3> ret = {
+      sp_matrix<amrex::Real>(2*cols_per_row*total_n, 3*total_n, total_fx),
+      sp_matrix<amrex::Real>(2*cols_per_row*total_n, 3*total_n, total_fy),
+      sp_matrix<amrex::Real>(2*cols_per_row*total_n, 3*total_n, total_fz)
+   };
+
+   get_curl_f2n_operator_sparse(ret, bx, nghost, dx);
+   
+   return ret;
+}
+
+void get_curl_n2f_operator_sparse(sp_matrix<amrex::Real>& curl_x, sp_matrix<amrex::Real>& curl_y, sp_matrix<amrex::Real>& curl_z, const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx);
+
+inline void get_curl_n2f_operator_sparse(std::array<sp_matrix<amrex::Real>,3>& curl, const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx) {
+   get_curl_n2f_operator_sparse(curl[0], curl[1], curl[2], bx, nghost, dx);
+}
+
+inline std::array<sp_matrix<amrex::Real>,3> get_curl_n2f_operator_sparse(const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx) {
+   const amrex::Box&
+      bx_fx = convert(bx,AMReXConst::btype_fx),
+      bx_fy = convert(bx,AMReXConst::btype_fy),
+      bx_fz = convert(bx,AMReXConst::btype_fz),
+      bx_n = grow(convert(bx,AMReXConst::btype_n), nghost);
+   
+   const amrex::IntVect
+      len_fx = bx_fx.length(),
+      len_fy = bx_fy.length(),
+      len_fz = bx_fz.length(),
+      len_n = bx_n.length();
+   
+   const int
+      total_fx = math::product(len_fx),
+      total_fy = math::product(len_fy),
+      total_fz = math::product(len_fz),
+      total_n = math::product(len_n);
+
+   constexpr int cols_per_row = 8;
+   
+   std::array<sp_matrix<amrex::Real>,3> ret = {
+      sp_matrix<amrex::Real>(cols_per_row*total_fx, total_fx, 3*total_n),
+      sp_matrix<amrex::Real>(cols_per_row*total_fy, total_fy, 3*total_n),
+      sp_matrix<amrex::Real>(cols_per_row*total_fz, total_fz, 3*total_n)
+   };
+
+   get_curl_n2f_operator_sparse(ret, bx, nghost, dx);
+   
+   return ret;
+}
+
+// Get cell (or node etc.) ID from given cell indices of cell in box
+// If the box has ghost cells then index needs to be shifted to accomodate
+inline int get_cellID(int x_index, int y_index, int z_index, const amrex::IntVect& len, int nghost = 0) {
+   x_index += nghost;
+   y_index += nghost;
+   z_index += nghost;
+   return (z_index*len[1] + y_index)*len[0] + x_index;
+}
+// Get cell (or node etc.) ID from given cell indices of cell in box
+// If the box has ghost cells then index needs to be shifted to accomodate
+inline int get_cellID(amrex::IntVect cell_indices, const amrex::IntVect& len, int nghost = 0) {
+   cell_indices += nghost;
+   return get_cellID(cell_indices[0], cell_indices[1], cell_indices[2], len);
+}
+
+inline amrex::IntVect get_cell_indices(int cellID, const amrex::IntVect& len, int nghost = 0) {
+   int
+      x_index = cellID%len[0]          - nghost,
+      y_index = (cellID/len[0])%len[1] - nghost,
+      z_index = cellID/(len[0]*len[1]) - nghost;
+   return amrex::IntVect(x_index,y_index,z_index);
+}
 
 #endif
