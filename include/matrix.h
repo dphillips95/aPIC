@@ -1,5 +1,5 @@
 /*
--- INSERT FILE DESCRIPTION --
+Matrix and sparse matrix classes for aPIC.
 
 Copyright 2026 Finnish Meteorological Institute.
 

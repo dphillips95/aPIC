@@ -373,11 +373,11 @@ public:
    // static void apply_matrix_E2E(BE& Ax, const BE& x, const amrex::LayoutData<T>& matA_E2E);
 };
 
-// GMRES linear operator class
+// Generic GMRES linear operator class; all methods are implemented except for apply(), constructor can be overriden
 // The "vector" is a class BE consisting of MultiFabs of B and E, and ahandful of class methods for norms etc.
 // They cannot be combined into a single MultiFab as they do not share the same grid
 class linop {
-private:
+protected:
    // BoxArray here has no ghost cells
    amrex::BoxArray m_ba;
    amrex::DistributionMapping m_dm;
@@ -390,6 +390,8 @@ public:
    
    linop(const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, int nghost, const amrex::GpuArray<RT,3>& dx, RT tFactor, const amrex::Periodicity& period) : m_ba(convert(ba,AMReXConst::btype_c)), m_dm(dm), m_nghost(nghost), m_dx(dx), m_tFactor(tFactor), m_period(period) {}
 
+   virtual ~linop() = default;
+   
    linop(const linop&) = delete;
    linop& operator=(const linop&) = delete;
 
@@ -413,19 +415,7 @@ public:
    }
    
    // Actual operator matrix product, i.e. x input, Ax output
-   void apply(BE& Ax, const BE& x) {
-      BL_PROFILE("gmres_apply()");
-      
-      BE::Copy(Ax,x,0);
-      
-      BL_PROFILE_VAR("gmres_curl_En()",TIMER_curl_En);
-      curl_n2f(Ax.getB_fx(), Ax.getB_fy(), Ax.getB_fz(), x.getE_n_const(), m_dx, m_tFactor);
-      BL_PROFILE_VAR_STOP(TIMER_curl_En);
-
-      BL_PROFILE_VAR("gmres_curl_Bf()",TIMER_curl_Bf);
-      curl_f2n(Ax.getE_n(), x.getB_fx_const(), x.getB_fy_const(), x.getB_fz_const(), m_dx, -m_tFactor*math::square(PhysConst::c));
-      BL_PROFILE_VAR_STOP(TIMER_curl_Bf);
-   }
+   virtual void apply(BE& Ax, const BE& x) = 0;
    
    // Assign lhs = rhs
    static void assign(BE& lhs, const BE& rhs) {
@@ -472,52 +462,40 @@ public:
    
    // Set vector to zero
    static void setToZero(BE& v) { v.setVal(0.0); }
+};
+
+// GMRES linear operator class, no matrix version (calculates curl etc. directly)
+class linop_direct: public linop {
+public:
+   using linop::linop;
    
+   void apply(BE& Ax, const BE& x) {
+      BL_PROFILE("gmres_apply()");
+      
+      BE::Copy(Ax,x,0);
+      
+      BL_PROFILE_VAR("gmres_curl_En()",TIMER_curl_En);
+      curl_n2f(Ax.getB_fx(), Ax.getB_fy(), Ax.getB_fz(), x.getE_n_const(), m_dx, m_tFactor);
+      BL_PROFILE_VAR_STOP(TIMER_curl_En);
+
+      BL_PROFILE_VAR("gmres_curl_Bf()",TIMER_curl_Bf);
+      curl_f2n(Ax.getE_n(), x.getB_fx_const(), x.getB_fy_const(), x.getB_fz_const(), m_dx, -m_tFactor*math::square(PhysConst::c));
+      BL_PROFILE_VAR_STOP(TIMER_curl_Bf);
+   }
 };
 
 // GMRES linear operator class, using matrix representations of operators
 // The "vector" is a class BE consisting of MultiFabs of B and E, and ahandful of class methods for norms etc.
 // They cannot be combined into a single MultiFab as they do not share the same grid
 template <typename T>
-class linop_matrix {
+class linop_matrix: public linop {
 private:
-   amrex::BoxArray m_ba; // BoxArray here has no ghost cells
-   amrex::DistributionMapping m_dm;
-   int m_nghost;
-   amrex::GpuArray<amrex::Real,3> m_dx;
-   amrex::Real m_tFactor; // time step factor, dt*theta
-   amrex::Periodicity m_period;
    std::array<amrex::LayoutData<T>,3> m_matA_B2E; // magnetic effect on electric (curl B), each component of B input is separated into different matrices - only changes when BoxArray changes
    std::array<amrex::LayoutData<T>,3> m_matA_E2B; // electric effect on magnetic (curl E), each component of B output is separated into different matrices - only changes when BoxArray changes
    amrex::LayoutData<T> m_matA_E2E; // electric self-interaction, current only (remainder is identity matrix) - this is the only matrix component that changes every time step
 public:
-   using RT = amrex::Real;
+   linop_matrix(const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, int nghost, const amrex::GpuArray<RT,3>& dx, RT tFactor, const amrex::Periodicity& period, const std::array<amrex::LayoutData<T>,3>& matA_B2E, const std::array<amrex::LayoutData<T>,3>& matA_E2B, const amrex::LayoutData<T> matA_E2E) : linop { ba, dm, nghost, dx, tFactor, period }, m_matA_B2E(matA_B2E), m_matA_E2B(matA_E2B), m_matA_E2E(matA_E2E) {}
    
-   linop_matrix(const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, int nghost, const amrex::GpuArray<RT,3>& dx, RT tFactor, const amrex::Periodicity& period, const std::array<amrex::LayoutData<T>,3>& matA_B2E, const std::array<amrex::LayoutData<T>,3>& matA_E2B, const amrex::LayoutData<T> matA_E2E) : m_ba(convert(ba,AMReXConst::btype_c)), m_dm(dm), m_nghost(nghost), m_dx(dx), m_tFactor(tFactor), m_period(period), m_matA_B2E(matA_B2E), m_matA_E2B(matA_E2B), m_matA_E2E(matA_E2E) {}
-
-   linop_matrix(const linop_matrix&) = delete;
-   linop_matrix& operator=(const linop_matrix&) = delete;
-
-   linop_matrix(linop_matrix&&) = default;
-   linop_matrix& operator=(linop_matrix&&) = default;
-   
-   void setBoxArray(const amrex::BoxArray& ba) {
-      m_ba = convert(ba,AMReXConst::btype_c);
-   }
-   void setDistributionMapping(const amrex::DistributionMapping& dm) {
-      m_dm = dm;
-   }
-   void setNGhost(int nghost) {
-      m_nghost = nghost;
-   }
-   void setDx(const amrex::GpuArray<RT,3>& dx) {
-      m_dx = dx;
-   }
-   void setTFactor(RT tFactor) {
-      m_tFactor = tFactor;
-   }
-   
-   // Actual operator matrix product, i.e. x input, Ax output
    void apply(BE& Ax, const BE& x) {
       BL_PROFILE("gmres_apply()");
       
@@ -535,53 +513,6 @@ public:
       // apply_matrix_E2E(Ax, x, m_matA_E2E);
       // BL_PROFILE_VAR_STOP(TIMER_current);
    }
-   
-   // Assign lhs = rhs
-   static void assign(BE& lhs, const BE& rhs) {
-      BE::Copy(lhs,rhs);
-      lhs.apply_BCs();
-   }
-   
-   // Dot product of v1 and v2
-   static RT dotProduct(const BE& v1, const BE& v2) {
-      return BE::dotProduct(v1,v2);
-   }
-   
-   // lhs += a*rhs
-   static void increment(BE& lhs, const BE& rhs, RT a) {
-      lhs.Saxpy(lhs,rhs,a);
-      lhs.apply_BCs();
-   }
-   
-   // lhs = a*rhs_a + b*rhs_b
-   static void linComb(BE& lhs, RT a, const BE& rhs_a, RT b, const BE& rhs_b) {
-      BE::linComb(lhs,a,rhs_a,b,rhs_b);
-      lhs.apply_BCs();
-   }
-   
-   // Return new vector suitable for rhs of Ax = b (i.e. b)
-   BE makeVecRHS() { return BE(m_ba,m_dm,0,m_period); }
-   
-   // Return new vector suitable for lhs of Ax = b (i.e. x)
-   BE makeVecLHS() { return BE(m_ba,m_dm,m_nghost,m_period); }
-   
-   // 2-norm of v
-   static RT norm2(const BE& v) { return v.norm2(); }
-   
-   // Apply right preconditioning, i.e. solve P(lhs) = rhs for preconditioning P
-   // P should be an approximation for A
-   // for now we use identity, could use A without particles
-   static void precond(BE& lhs, const BE& rhs) {
-      BE::Copy(lhs,rhs,0);
-      lhs.apply_BCs();
-   }
-   
-   // Multiply vector v by factor fac
-   static void scale(BE& v, RT fac) { v.mult(fac); }
-   
-   // Set vector to zero
-   static void setToZero(BE& v) { v.setVal(0.0); }
-   
 };
 
 // Advance B and E fields by solving gmres system using matrices

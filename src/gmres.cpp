@@ -52,9 +52,9 @@ void gmres_step(BE& x, GpuArray<Real,3> dx, Real dt, Real theta, Real rtol, Real
    curl_n2f(b.getB_fx(), b.getB_fy(), b.getB_fz(), x.getE_n_const(), dx, -dt*(1-theta));
    curl_f2n(b.getE_n(), x.getB_fx_const(), x.getB_fy_const(), x.getB_fz_const(), dx, math::square(PhysConst::c)*dt*(1-theta));
    
-   linop gmres_operator(x.getBoxArray(), x.getDistributionMap(), x.nghost(), dx, dt*theta, x.getPeriod());
+   linop_direct gmres_operator(x.getBoxArray(), x.getDistributionMap(), x.nghost(), dx, dt*theta, x.getPeriod());
    
-   GMRES<BE,linop> gmres_solver;
+   GMRES<BE,linop_direct> gmres_solver;
    
    gmres_solver.define(gmres_operator);
    gmres_solver.setVerbose(verbosity);
