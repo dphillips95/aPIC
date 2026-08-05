@@ -299,6 +299,23 @@ int main(int argc, char* argv[]) {
       }
       Energy_c.setVal(0.0);
       
+      /*
+      if (ParallelDescriptor::MyProc() == dm[0]) {
+         const Array4<Real>&
+            En_array = (*E_n)[0].array(),
+            Bf_array_x = (*B_f[0])[0].array(),
+            Bf_array_y = (*B_f[1])[0].array(),
+            Bf_array_z = (*B_f[2])[0].array();
+         
+         En_array(0,0,0,0) = 0;
+         En_array(0,0,0,1) = 1;
+         En_array(0,0,0,2) = 0;
+         Bf_array_x(0,0,0) = 0;
+         Bf_array_y(0,0,0) = 1;
+         Bf_array_z(0,0,0) = 0;
+      }
+      */
+      
       for (MFIter mfi(*E_n); mfi.isValid(); ++mfi) {
          const Box&
             bx_n = mfi.tilebox(AMReXConst::btype_n),
@@ -310,13 +327,6 @@ int main(int argc, char* argv[]) {
             Bf_array_x = B_f[0]->array(mfi),
             Bf_array_y = B_f[1]->array(mfi),
             Bf_array_z = B_f[2]->array(mfi);
-
-         // En_array(0,0,0,0) = 0;
-         // En_array(0,0,0,1) = 1;
-         // En_array(0,0,0,2) = 0;
-         // Bf_array_x(0,0,0) = 0;
-         // Bf_array_y(0,0,0) = 1;
-         // Bf_array_z(0,0,0) = 0;
          
          ParallelFor(bx_n, [&](int ii, int jj, int kk) {
             // Real
@@ -619,11 +629,35 @@ int main(int argc, char* argv[]) {
             
             B_c.FillBoundary(geom.periodicity());
             E_c.FillBoundary(geom.periodicity());
-
+            
             Energy_c.setVal(0.0);
             
             Energy_c = compute_EM_energy(B_c,E_c);
+            /*
+            E_c.setVal(0.0);
+            B_c.setVal(0.0);
+            Energy_c.setVal(0.0);
 
+            for (MFIter mfi(B_c); mfi.isValid(); ++mfi) {
+               const Box& bx_c = mfi.tilebox(AMReXConst::btype_c);
+               const Array4<Real>&
+                  Bc_array = B_c.array(mfi),
+                  Ec_array = E_c.array(mfi),
+                  EMc_array = Energy_c.array(mfi);
+
+               ParallelFor(bx_c, [&](int ii, int jj, int kk) {
+                  Bc_array(ii,jj,kk,0) = ((kk*y_size + jj)*x_size + ii)*9 + 0;
+                  Bc_array(ii,jj,kk,1) = ((kk*y_size + jj)*x_size + ii)*9 + 1;
+                  Bc_array(ii,jj,kk,2) = ((kk*y_size + jj)*x_size + ii)*9 + 2;
+                  Ec_array(ii,jj,kk,0) = ((kk*y_size + jj)*x_size + ii)*9 + 3;
+                  Ec_array(ii,jj,kk,1) = ((kk*y_size + jj)*x_size + ii)*9 + 4;
+                  Ec_array(ii,jj,kk,2) = ((kk*y_size + jj)*x_size + ii)*9 + 5;
+                  EMc_array(ii,jj,kk,0) = ((kk*y_size + jj)*x_size + ii)*9 + 6;
+                  EMc_array(ii,jj,kk,1) = ((kk*y_size + jj)*x_size + ii)*9 + 7;
+                  EMc_array(ii,jj,kk,2) = ((kk*y_size + jj)*x_size + ii)*9 + 8;
+               });
+            }
+            */
             Real
                total_B_energy = 0.0,
                total_E_energy = 0.0,
@@ -639,7 +673,7 @@ int main(int argc, char* argv[]) {
                   total_EM_energy += Energy_c_array(ii,jj,kk,2);
                });
             }
-
+            
             datalog << std::setw(Log::stepWidth) << step
                     << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_B_energy
                     << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_E_energy

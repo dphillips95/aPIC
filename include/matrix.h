@@ -184,7 +184,9 @@ public:
 
    // Fill in extra rows of m_row_indices at end if blank
    void finalise() {
-      this->add_rows(m_nrows - m_row_indices.size() + 1);
+      if (m_nrows > m_row_indices.size()) {
+         this->add_rows(m_nrows + 1 - m_row_indices.size());
+      }
    }
    
    std::array<size_t,2> size() const { return {m_nrows,m_ncols}; }

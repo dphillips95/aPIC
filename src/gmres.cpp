@@ -559,17 +559,19 @@ void get_curl_f2n_operator_sparse(sp_matrix<Real>& curl_x, sp_matrix<Real>& curl
    col_indices_yz.reserve(cols_per_row*total_n);
    col_indices_zx.reserve(cols_per_row*total_n);
    col_indices_zy.reserve(cols_per_row*total_n);
+
+   const IntVect base_index { bx_n.smallEnd() };
    
    ParallelFor(bx_n, [&](int ii, int jj, int kk) {
       // Coords of node and adjacent faces
       const IntVect
-         cell_000(ii,     jj,     kk    ),
-         cell_100(ii - 1, jj,     kk    ),
-         cell_010(ii,     jj - 1, kk    ),
-         cell_110(ii - 1, jj - 1, kk    ),
-         cell_001(ii,     jj,     kk - 1),
-         cell_101(ii - 1, jj,     kk - 1),
-         cell_011(ii,     jj - 1, kk - 1);
+         cell_000 = IntVect(ii, jj, kk) - base_index,
+         cell_100 = cell_000 - IntVect(1,0,0),
+         cell_010 = cell_000 - IntVect(0,1,0),
+         cell_110 = cell_000 - IntVect(1,1,0),
+         cell_001 = cell_000 - IntVect(0,0,1),
+         cell_101 = cell_000 - IntVect(1,0,1),
+         cell_011 = cell_000 - IntVect(0,1,1);
       
       // Find column in matrix for each face
       // Each face box has different dimensions, and
@@ -737,13 +739,16 @@ void get_curl_n2f_operator_sparse(sp_matrix<Real>& curl_x, sp_matrix<Real>& curl
    col_indices_x.reserve(cols_per_row*total_fx);
    col_indices_y.reserve(cols_per_row*total_fy);
    col_indices_z.reserve(cols_per_row*total_fz);
+
+   const IntVect base_index_x { bx_fx.smallEnd() };
    
    ParallelFor(bx_fx, [&](int ii, int jj, int kk) {
       const IntVect
-         cell_000(ii,   jj,   kk  ),
-         cell_010(ii,   jj+1, kk  ),
-         cell_001(ii,   jj,   kk+1),
-         cell_011(ii,   jj+1, kk+1);
+         cell_000 = IntVect(ii, jj, kk) - base_index_x,
+         cell_010 = cell_000 + IntVect(0,1,0),
+         cell_001 = cell_000 + IntVect(0,0,1),
+         cell_011 = cell_000 + IntVect(0,1,1);
+      
       // Find column in matrix for each node
       // Each face box has different dimensions, and
       // Matrix rows are organised as x-faces first then y- and z-
@@ -782,12 +787,15 @@ void get_curl_n2f_operator_sparse(sp_matrix<Real>& curl_x, sp_matrix<Real>& curl
       col_indices_x.push_back(nzID_011);
    });
 
+   const IntVect base_index_y { bx_fy.smallEnd() };
+   
    ParallelFor(bx_fy, [&](int ii, int jj, int kk) {
       const IntVect
-         cell_000(ii,   jj,   kk  ),
-         cell_100(ii+1, jj,   kk  ),
-         cell_001(ii,   jj,   kk+1),
-         cell_101(ii+1, jj,   kk+1);
+         cell_000 = IntVect(ii, jj, kk) - base_index_y,
+         cell_100 = cell_000 + IntVect(1,0,0),
+         cell_001 = cell_000 + IntVect(0,0,1),
+         cell_101 = cell_000 + IntVect(1,0,1);
+      
       // Find column in matrix for each node
       // Each face box has different dimensions, and
       // Matrix rows are organised as x-faces first then y- and z-
@@ -825,13 +833,16 @@ void get_curl_n2f_operator_sparse(sp_matrix<Real>& curl_x, sp_matrix<Real>& curl
       col_indices_y.push_back(nzID_001);
       col_indices_y.push_back(nzID_101);
    });
+
+   const IntVect base_index_z { bx_fz.smallEnd() };
    
    ParallelFor(bx_fz, [&](int ii, int jj, int kk) {
       const IntVect
-         cell_000(ii,   jj,   kk  ),
-         cell_100(ii+1, jj,   kk  ),
-         cell_010(ii,   jj+1, kk  ),
-         cell_110(ii+1, jj+1, kk  );
+         cell_000 = IntVect(ii, jj, kk) - base_index_z,
+         cell_100 = cell_000 + IntVect(1,0,0),
+         cell_010 = cell_000 + IntVect(0,1,0),
+         cell_110 = cell_000 + IntVect(1,1,0);
+      
       // Find column in matrix for each node
       // Each face box has different dimensions, and
       // Matrix rows are organised as x-faces first then y- and z-
