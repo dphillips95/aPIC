@@ -89,32 +89,20 @@ public:
       
       return new_BE;
    }
-   
-   const amrex::MultiFab& getB_fx_const() const {
-      return m_B_fx;
-   }
-   const amrex::MultiFab& getB_fy_const() const {
-      return m_B_fy;
-   }
-   const amrex::MultiFab& getB_fz_const() const {
-      return m_B_fz;
-   }
-   const amrex::MultiFab& getE_n_const() const {
-      return m_E_n;
-   }
 
-   amrex::MultiFab& getB_fx() {
-      return m_B_fx;
-   }
-   amrex::MultiFab& getB_fy() {
-      return m_B_fy;
-   }
-   amrex::MultiFab& getB_fz() {
-      return m_B_fz;
-   }
-   amrex::MultiFab& getE_n() {
-      return m_E_n;
-   }
+   const amrex::BoxArray& getBoxArray() const { return m_ba; }
+   const amrex::DistributionMapping& getDistributionMap() const { return m_dm; }
+   const amrex::Periodicity& getPeriod() const { return m_period; }
+   
+   const amrex::MultiFab& getB_fx_const() const { return m_B_fx; }
+   const amrex::MultiFab& getB_fy_const() const { return m_B_fy; }
+   const amrex::MultiFab& getB_fz_const() const { return m_B_fz; }
+   const amrex::MultiFab& getE_n_const()  const { return m_E_n;  }
+
+   amrex::MultiFab& getB_fx() { return m_B_fx; }
+   amrex::MultiFab& getB_fy() { return m_B_fy; }
+   amrex::MultiFab& getB_fz() { return m_B_fz; }
+   amrex::MultiFab& getE_n()  { return m_E_n;  }
    
    // Return number of ghost cells
    int nghost() const { return m_nghost; }
@@ -427,30 +415,16 @@ public:
    // Actual operator matrix product, i.e. x input, Ax output
    void apply(BE& Ax, const BE& x) {
       BL_PROFILE("gmres_apply()");
-      static amrex::MultiFab curl_Bf(convert(m_ba,AMReXConst::btype_n),m_dm, 3, 0);
-      static std::array<amrex::MultiFab,3> curl_En = {
-         amrex::MultiFab(convert(m_ba,AMReXConst::btype_fx),m_dm, 1, 0),
-         amrex::MultiFab(convert(m_ba,AMReXConst::btype_fy),m_dm, 1, 0),
-         amrex::MultiFab(convert(m_ba,AMReXConst::btype_fz),m_dm, 1, 0)
-      };
       
       BE::Copy(Ax,x,0);
-
-      curl_Bf.setVal(0.0);
-      for (int nn=0; nn<3; ++nn) {
-         curl_En[nn].setVal(0.0);
-      }
       
       BL_PROFILE_VAR("gmres_curl_En()",TIMER_curl_En);
-      curl_n2f(curl_En, x.getE_n_const(), m_dx);
+      curl_n2f(Ax.getB_fx(), Ax.getB_fy(), Ax.getB_fz(), x.getE_n_const(), m_dx, m_tFactor);
       BL_PROFILE_VAR_STOP(TIMER_curl_En);
-      
+
       BL_PROFILE_VAR("gmres_curl_Bf()",TIMER_curl_Bf);
-      curl_f2n(curl_Bf, x.getB_fx_const(), x.getB_fy_const(), x.getB_fz_const(), m_dx);
+      curl_f2n(Ax.getE_n(), x.getB_fx_const(), x.getB_fy_const(), x.getB_fz_const(), m_dx, -m_tFactor*math::square(PhysConst::c));
       BL_PROFILE_VAR_STOP(TIMER_curl_Bf);
-      
-      BE::Saxpy_B(Ax, curl_En, m_tFactor);
-      BE::Saxpy_En(Ax, curl_Bf, -m_tFactor*math::square(PhysConst::c));
    }
    
    // Assign lhs = rhs
@@ -546,12 +520,6 @@ public:
    // Actual operator matrix product, i.e. x input, Ax output
    void apply(BE& Ax, const BE& x) {
       BL_PROFILE("gmres_apply()");
-      static amrex::MultiFab curl_Bf(convert(m_ba,AMReXConst::btype_n),m_dm, 3, 0);
-      static std::array<amrex::MultiFab,3> curl_En = {
-         amrex::MultiFab(convert(m_ba,AMReXConst::btype_fx),m_dm, 1, 0),
-         amrex::MultiFab(convert(m_ba,AMReXConst::btype_fy),m_dm, 1, 0),
-         amrex::MultiFab(convert(m_ba,AMReXConst::btype_fz),m_dm, 1, 0)
-      };
       
       BE::Copy(Ax,x,0);
       
@@ -618,50 +586,24 @@ public:
 
 // Advance B and E fields by solving gmres system using matrices
 template <typename T>
-void gmres_step_matrix(std::array<amrex::MultiFab,3>& B_f, amrex::MultiFab& E_n, std::array<amrex::LayoutData<T>,3>& matA_B2E, std::array<amrex::LayoutData<T>,3>& matA_E2B, amrex::LayoutData<T>& matA_E2E, amrex::GpuArray<amrex::Real,3> dx, amrex::Real dt, amrex::Real theta, amrex::Periodicity period, amrex::Real rtol, amrex::Real atol, int verbosity) {
+void gmres_step_matrix(BE& x, std::array<amrex::LayoutData<T>,3>& matA_B2E, std::array<amrex::LayoutData<T>,3>& matA_E2B, amrex::LayoutData<T>& matA_E2E, amrex::GpuArray<amrex::Real,3> dx, amrex::Real dt, amrex::Real theta, amrex::Real rtol, amrex::Real atol, int verbosity) {
    BL_PROFILE("gmres_step()");
    
    // To prevent reallocation every step, state vector BE and curl results are pre-allocated static
    static BE
-      x(E_n.boxArray(), E_n.distributionMap, E_n.n_grow[0], period),
-      // Ax = x.copy_dim(0),
       b = x.copy_dim(0);
-   static amrex::MultiFab curl_Bf(convert(E_n.boxArray(),AMReXConst::btype_n),E_n.distributionMap, 3, 0);
-   static std::array<amrex::MultiFab,3> curl_En = {
-      amrex::MultiFab(convert(E_n.boxArray(),AMReXConst::btype_fx),E_n.distributionMap, 1, 0),
-      amrex::MultiFab(convert(E_n.boxArray(),AMReXConst::btype_fy),E_n.distributionMap, 1, 0),
-      amrex::MultiFab(convert(E_n.boxArray(),AMReXConst::btype_fz),E_n.distributionMap, 1, 0)
-   };
-
-   x.setVal(0.0);
+   
    // Ax.setVal(0.0);
    b.setVal(0.0);
-   for (int ii=0; ii<3; ++ii) {
-      curl_En[ii].setVal(0.0);
-   }
-   curl_Bf.setVal(0.0);
-
-   // State vector (lhs); initial state is start of time step
-   
-   BE::Copy_Bfx(x, B_f[0]);
-   BE::Copy_Bfy(x, B_f[1]);
-   BE::Copy_Bfz(x, B_f[2]);
-   BE::Copy_En(x, E_n);
    
    // rhs; first includes initial B and E so copy x without ghost cells
    BE::Copy(b, x, 0);
    
-   // Calculate curls of initial state; no ghost cells needed
-   // curl_n2f(curl_En, E_n, dx);
-   // curl_f2n(curl_Bf, B_f, dx);
+   // Calculate curls of initial state and add to b
+   curl_n2f(b.getB_fx(), b.getB_fy(), b.getB_fz(), x.getE_n_const(), dx, -dt*(1-theta));
+   curl_f2n(b.getE_n(), x.getB_fx_const(), x.getB_fy_const(), x.getB_fz_const(), dx, math::square(PhysConst::c)*dt*(1-theta));
    
-   // BE::Saxpy_B(b, curl_En, -dt*(1-theta));
-   // BE::Saxpy_En(b, curl_Bf, math::square(PhysConst::c)*dt*(1-theta));
-   
-   curl_n2f(b.getB_fx(), b.getB_fy(), b.getB_fz(), E_n, dx, -dt*(1-theta));
-   curl_f2n(b.getE_n(), B_f, dx, math::square(PhysConst::c)*dt*(1-theta));
-   
-   linop_matrix<T> gmres_operator(E_n.boxArray(), E_n.distributionMap, E_n.n_grow[0], dx, dt*theta, period, matA_B2E, matA_E2B, matA_E2E);
+   linop_matrix<T> gmres_operator(x.getBoxArray(), x.getDistributionMap(), x.nghost(), dx, dt*theta, x.getPeriod(), matA_B2E, matA_E2B, matA_E2E);
    
    amrex::GMRES<BE,linop_matrix<T>> gmres_solver;
 
@@ -755,14 +697,9 @@ void gmres_step_matrix(std::array<amrex::MultiFab,3>& B_f, amrex::MultiFab& E_n,
    } else {
       amrex::Print() << "GMRES Iteration count: " << gmres_solver.getNumIters() << std::endl;
    }
-   
-   amrex::MultiFab::Copy(B_f[0], x.getB_fx(), 0, 0, 1, x.nghost());
-   amrex::MultiFab::Copy(B_f[1], x.getB_fy(), 0, 0, 1, x.nghost());
-   amrex::MultiFab::Copy(B_f[2], x.getB_fz(), 0, 0, 1, x.nghost());
-   amrex::MultiFab::Copy(E_n, x.getE_n(), 0, 0, 3, x.nghost());
 }
 
-void gmres_step(std::array<amrex::MultiFab,3>& B_f, amrex::MultiFab& E_n, amrex::GpuArray<amrex::Real,3> dx, amrex::Real dt, amrex::Real theta, amrex::Periodicity period, amrex::Real rtol, amrex::Real atol, int verbosity = 0);
+void gmres_step(BE& x, amrex::GpuArray<amrex::Real,3> dx, amrex::Real dt, amrex::Real theta, amrex::Real rtol, amrex::Real atol, int verbosity = 0);
 
 void get_curl_f2n_operator(matrix<amrex::Real>& curl_x, matrix<amrex::Real>& curl_y, matrix<amrex::Real>& curl_z, const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx);
                            

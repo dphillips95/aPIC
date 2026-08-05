@@ -36,48 +36,23 @@ Author(s): David Phillips
 using namespace amrex;
 
 // Advance B and E fields by solving gmres system
-void gmres_step(std::array<MultiFab,3>& B_f, MultiFab& E_n, GpuArray<Real,3> dx, Real dt, Real theta, Periodicity period, Real rtol, Real atol, int verbosity) {
+void gmres_step(BE& x, GpuArray<Real,3> dx, Real dt, Real theta, Real rtol, Real atol, int verbosity) {
    BL_PROFILE("gmres_step()");
    
-   // To prevent reallocation every step, state vector BE and curl results are pre-allocated static
+   // To prevent reallocation every step, rhs state vector b is static
+   // This may have issues if using omp
    static BE
-      x(E_n.boxArray(), E_n.distributionMap, E_n.n_grow[0], period),
       b = x.copy_dim(0);
-   static MultiFab curl_Bf(convert(E_n.boxArray(),AMReXConst::btype_n),E_n.distributionMap, 3, 0);
-   static std::array<MultiFab,3> curl_En = {
-      MultiFab(convert(E_n.boxArray(),AMReXConst::btype_fx),E_n.distributionMap, 1, 0),
-      MultiFab(convert(E_n.boxArray(),AMReXConst::btype_fy),E_n.distributionMap, 1, 0),
-      MultiFab(convert(E_n.boxArray(),AMReXConst::btype_fz),E_n.distributionMap, 1, 0)
-   };
 
-   x.setVal(0.0);
    b.setVal(0.0);
-   for (int ii=0; ii<3; ++ii) {
-      curl_En[ii].setVal(0.0);
-   }
-   curl_Bf.setVal(0.0);
-   
-   // State vector (lhs); initial state is start of time step
-   
-   BE::Copy_Bfx(x, B_f[0]);
-   BE::Copy_Bfy(x, B_f[1]);
-   BE::Copy_Bfz(x, B_f[2]);
-   BE::Copy_En(x, E_n);
    
    // rhs; first includes initial B and E so copy x without ghost cells
    BE::Copy(b, x, 0);
    
-   // Calculate curls of initial state; no ghost cells needed
-   // curl_n2f(curl_En, E_n, dx);
-   // curl_f2n(curl_Bf, B_f, dx);
+   curl_n2f(b.getB_fx(), b.getB_fy(), b.getB_fz(), x.getE_n_const(), dx, -dt*(1-theta));
+   curl_f2n(b.getE_n(), x.getB_fx_const(), x.getB_fy_const(), x.getB_fz_const(), dx, math::square(PhysConst::c)*dt*(1-theta));
    
-   // BE::Saxpy_B(b, curl_En, -dt*(1-theta));
-   // BE::Saxpy_En(b, curl_Bf, math::square(PhysConst::c)*dt*(1-theta));
-
-   curl_n2f(b.getB_fx(), b.getB_fy(), b.getB_fz(), E_n, dx, -dt*(1-theta));
-   curl_f2n(b.getE_n(), B_f, dx, math::square(PhysConst::c)*dt*(1-theta));
-   
-   linop gmres_operator(E_n.boxArray(), E_n.distributionMap, E_n.n_grow[0], dx, dt*theta, period);
+   linop gmres_operator(x.getBoxArray(), x.getDistributionMap(), x.nghost(), dx, dt*theta, x.getPeriod());
    
    GMRES<BE,linop> gmres_solver;
    
@@ -94,11 +69,6 @@ void gmres_step(std::array<MultiFab,3>& B_f, MultiFab& E_n, GpuArray<Real,3> dx,
    } else {
       Print() << "GMRES Iteration count: " << gmres_solver.getNumIters() << std::endl;
    }
-   
-   MultiFab::Copy(B_f[0], x.getB_fx_const(), 0, 0, 1, x.nghost());
-   MultiFab::Copy(B_f[1], x.getB_fy_const(), 0, 0, 1, x.nghost());
-   MultiFab::Copy(B_f[2], x.getB_fz_const(), 0, 0, 1, x.nghost());
-   MultiFab::Copy(E_n, x.getE_n_const(), 0, 0, 3, x.nghost());
 }
 
 /*

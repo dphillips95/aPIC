@@ -204,6 +204,13 @@ int main(int argc, char* argv[]) {
       
       Box
          box_c(IntVect{0,0,0}, IntVect{x_size-1, y_size-1, z_size-1}); // cell-centred
+
+      RealBox real_box ({x_min,y_min,z_min}, {x_max,y_max,z_max});
+      
+      Geometry geom;
+      geom.define(box_c, real_box, CoordSys::cartesian, periodicity);
+      
+      GpuArray<Real,3> dx = geom.CellSizeArray();
       
       BoxArray
          ba_c(box_c); // cell-centred, others generated via conversion as needed
@@ -221,14 +228,29 @@ int main(int argc, char* argv[]) {
          ba_ez = convert(ba_c,AMReXConst::btype_ez);
       
       DistributionMapping dm(ba_c);
+
+      // Vector containing B_f and E_n states
+      BE EM_state(ba_n, dm, nghost, geom.periodicity());
+
+      MultiFab* E_n = &EM_state.getE_n();
+      std::array<MultiFab*,3> B_f = {
+         &EM_state.getB_fx(),
+         &EM_state.getB_fy(),
+         &EM_state.getB_fz()
+      };
       
       MultiFab
          Jp_c(ba_c, dm, 3, nghost),
          B_n(ba_n, dm, 3, nghost),
-         E_n(ba_n, dm, 3, nghost),
          B_c(ba_c, dm, 3, nghost),
          E_c(ba_c, dm, 3, nghost),
          Energy_c(ba_c, dm, 3, nghost);
+
+      // std::array<MultiFab,3> B_f = {
+      //    MultiFab(ba_fx, dm, 1, nghost),
+      //    MultiFab(ba_fy, dm, 1, nghost),
+      //    MultiFab(ba_fz, dm, 1, nghost)
+      // };
       
       MultiFab
          curl_B_n(ba_n, dm, 3, 0),
@@ -254,13 +276,7 @@ int main(int argc, char* argv[]) {
          MultiFab(ba_fy, dm, 1, nghost),
          MultiFab(ba_fz, dm, 1, nghost)
       };
-
-      std::array<MultiFab,3> B_f = {
-         MultiFab(ba_fx, dm, 1, nghost),
-         MultiFab(ba_fy, dm, 1, nghost),
-         MultiFab(ba_fz, dm, 1, nghost)
-      };
-
+      
       // Distributed sparse matrices for curl operators
       std::array<LayoutData<sp_matrix<Real>>,3> matA_B2E = {
          LayoutData<sp_matrix<Real>>(ba_c,dm),
@@ -276,31 +292,24 @@ int main(int argc, char* argv[]) {
       
       Jp_c.setVal(0.0);
       B_n.setVal(0.0);
-      E_n.setVal(0.0);
+      E_n->setVal(0.0);
       for (int nn=0; nn<3; ++nn) {
          Jp_f[nn].setVal(0.0);
-         B_f[nn].setVal(0.0);
+         B_f[nn]->setVal(0.0);
       }
       Energy_c.setVal(0.0);
       
-      RealBox real_box ({x_min,y_min,z_min}, {x_max,y_max,z_max});
-      
-      Geometry geom;
-      geom.define(box_c, real_box, CoordSys::cartesian, periodicity);
-      
-      GpuArray<Real,3> dx = geom.CellSizeArray();
-      
-      for (MFIter mfi(E_n); mfi.isValid(); ++mfi) {
+      for (MFIter mfi(*E_n); mfi.isValid(); ++mfi) {
          const Box&
             bx_n = mfi.tilebox(AMReXConst::btype_n),
             bx_fx = mfi.tilebox(AMReXConst::btype_fx),
             bx_fy = mfi.tilebox(AMReXConst::btype_fy),
             bx_fz = mfi.tilebox(AMReXConst::btype_fz);
          const Array4<Real>&
-            En_array = E_n.array(mfi),
-            Bf_array_x = B_f[0].array(mfi),
-            Bf_array_y = B_f[1].array(mfi),
-            Bf_array_z = B_f[2].array(mfi);
+            En_array = E_n->array(mfi),
+            Bf_array_x = B_f[0]->array(mfi),
+            Bf_array_y = B_f[1]->array(mfi),
+            Bf_array_z = B_f[2]->array(mfi);
 
          // En_array(0,0,0,0) = 0;
          // En_array(0,0,0,1) = 1;
@@ -386,39 +395,39 @@ int main(int argc, char* argv[]) {
       }
 
       // Boundary conditions
-      E_n.FillBoundary(geom.periodicity());
+      E_n->FillBoundary(geom.periodicity());
       for (int nn=0; nn<3; ++nn) {
-         B_f[nn].FillBoundary(geom.periodicity());
+         B_f[nn]->FillBoundary(geom.periodicity());
       }
 
       // Make sure nodes in periodic data are also synced (fillboundary does not update "valid" nodes on edge, which will match those on other side of domain with periodic BCs)
       // There (should) not be any reason why this will be violated at future time
       // Data is identical as it is shared across boundaries
       // Only(?) question is if calculations are done in same order
-      E_n.EnforcePeriodicity(geom.periodicity());
+      E_n->EnforcePeriodicity(geom.periodicity());
       for (int nn=0; nn<3; ++nn) {
-         B_f[nn].EnforcePeriodicity(geom.periodicity());
+         B_f[nn]->EnforcePeriodicity(geom.periodicity());
       }
 
       // std::unique_ptr<iMultiFab>
-      //    omask_fx_ghost(B_f[0], geom.periodicity(), vectghost),
-      //    omask_fy_ghost(B_f[1], geom.periodicity(), vectghost),
-      //    omask_fz_ghost(B_f[2], geom.periodicity(), vectghost),
-      //    omask_n_ghost(E_n, geom.periodicity(), vectghost);
+      //    omask_fx_ghost(*B_f[0], geom.periodicity(), vectghost),
+      //    omask_fy_ghost(*B_f[1], geom.periodicity(), vectghost),
+      //    omask_fz_ghost(*B_f[2], geom.periodicity(), vectghost),
+      //    omask_n_ghost(*E_n, geom.periodicity(), vectghost);
 
-      E_n.OverrideSync(geom.periodicity());
+      E_n->OverrideSync(geom.periodicity());
       for (int nn=0; nn<3; ++nn) {
-         B_f[nn].OverrideSync(geom.periodicity());
+         B_f[nn]->OverrideSync(geom.periodicity());
       }
       
       // Ensure boundary conditions were not violated in last step
-      E_n.FillBoundary(geom.periodicity());
+      E_n->FillBoundary(geom.periodicity());
       for (int nn=0; nn<3; ++nn) {
-         B_f[nn].FillBoundary(geom.periodicity());
+         B_f[nn]->FillBoundary(geom.periodicity());
       }
 
       // Generate curl operators
-      for (MFIter mfi(E_n); mfi.isValid(); ++mfi) {
+      for (MFIter mfi(*E_n); mfi.isValid(); ++mfi) {
          const Box&
             bx_n = mfi.tilebox(AMReXConst::btype_n),
             bx_n_ghost = grow(bx_n, nghost);
@@ -493,10 +502,10 @@ int main(int argc, char* argv[]) {
          auto matA_E2By_sp_mf = matA_E2B_sp[1][mfi];
          auto matA_E2Bz_sp_mf = matA_E2B_sp[2][mfi];
          
-         const FArrayBox& En_data { E_n[mfi] };
-         const FArrayBox& Bfx_data { B_f[0][mfi] };
-         const FArrayBox& Bfy_data { B_f[1][mfi] };
-         const FArrayBox& Bfz_data { B_f[2][mfi] };
+         const FArrayBox& En_data { (*E_n)[mfi] };
+         const FArrayBox& Bfx_data { (*B_f[0])[mfi] };
+         const FArrayBox& Bfy_data { (*B_f[1])[mfi] };
+         const FArrayBox& Bfz_data { (*B_f[2])[mfi] };
 
          amrex::FArrayBox& curl_Bn_data { curl_B_n[mfi] };
          amrex::FArrayBox& curl_Efx_data { curl_E_fx[mfi] };
@@ -580,10 +589,10 @@ int main(int argc, char* argv[]) {
       
       // const IntVect& sym_dir = AMReXConst::btype_ex;
       
-      // Print() << "E_n: " << sym_test(E_n,sym_dir) << std::endl
-      //         << "B_fx: " << sym_test(B_f[0],sym_dir) << std::endl
-      //         << "B_fy: " << sym_test(B_f[1],sym_dir) << std::endl
-      //         << "B_fz: " << sym_test(B_f[2],sym_dir) << std::endl;
+      // Print() << "E_n: " << sym_test(*E_n,sym_dir) << std::endl
+      //         << "B_fx: " << sym_test(*B_f[0],sym_dir) << std::endl
+      //         << "B_fy: " << sym_test(*B_f[1],sym_dir) << std::endl
+      //         << "B_fz: " << sym_test(*B_f[2],sym_dir) << std::endl;
       
       Real time = 0.0;
       
@@ -594,12 +603,9 @@ int main(int argc, char* argv[]) {
             const std::string& pltfile = amrex::Concatenate("plt", step, 5);
             
             MultiFab plt_Fab(ba_c, dm, 9, nghost);
-
-            B_c.setVal(0.0);
-            E_c.setVal(0.0);
             
-            B_c = face2cell(B_f);
-            E_c = node2cell(E_n);
+            B_c = face2cell(*B_f[0], *B_f[1], *B_f[2]);
+            E_c = node2cell(*E_n);
             
             B_c.FillBoundary(geom.periodicity());
             E_c.FillBoundary(geom.periodicity());
@@ -638,23 +644,23 @@ int main(int argc, char* argv[]) {
             WriteSingleLevelPlotfileHDF5(pltfile, plt_Fab, {"Bx","By","Bz","Ex","Ey","Ez","B_Energy","E_Energy","EM_Energy"}, geom, time, step);
          }
 
-         // gmres_step(B_f, E_n, dx, dt, theta, geom.periodicity(), rtol, atol, verbosity);
-         gmres_step_matrix(B_f, E_n, matA_B2E, matA_E2B, matA_E2E, dx, dt, theta, geom.periodicity(), rtol, atol, verbosity);
+         // gmres_step(EM_state, dx, dt, theta, rtol, atol, verbosity);
+         gmres_step_matrix(EM_state, matA_B2E, matA_E2B, matA_E2E, dx, dt, theta, rtol, atol, verbosity);
          
-         // Print() << "E_n: " << sym_test(E_n,sym_dir) << std::endl
-         //         << "B_fx: " << sym_test(B_f[0],sym_dir) << std::endl
-         //         << "B_fy: " << sym_test(B_f[1],sym_dir) << std::endl
-         //         << "B_fz: " << sym_test(B_f[2],sym_dir) << std::endl;
+         // Print() << "E_n: " << sym_test(*E_n,sym_dir) << std::endl
+         //         << "B_fx: " << sym_test(*B_f[0],sym_dir) << std::endl
+         //         << "B_fy: " << sym_test(*B_f[1],sym_dir) << std::endl
+         //         << "B_fz: " << sym_test(*B_f[2],sym_dir) << std::endl;
 
          // Complete boundary conditions
-         E_n.FillBoundary(geom.periodicity());
+         E_n->FillBoundary(geom.periodicity());
          for (int nn=0; nn<3; ++nn) {
-            B_f[nn].FillBoundary(geom.periodicity());
+            B_f[nn]->FillBoundary(geom.periodicity());
          }
 
-         E_n.OverrideSync(geom.periodicity());
+         E_n->OverrideSync(geom.periodicity());
          for (int nn=0; nn<3; ++nn) {
-            B_f[nn].OverrideSync(geom.periodicity());
+            B_f[nn]->OverrideSync(geom.periodicity());
          }
          
          time += dt;
@@ -662,12 +668,9 @@ int main(int argc, char* argv[]) {
       const std::string& pltfile = amrex::Concatenate("plt", steps, 5);
       
       MultiFab plt_Fab(ba_c, dm, 9, nghost);
-
-      B_c.setVal(0.0);
-      E_c.setVal(0.0);
       
-      B_c = face2cell(B_f);
-      E_c = node2cell(E_n);
+      B_c = face2cell(*B_f[0], *B_f[1], *B_f[2]);
+      E_c = node2cell(*E_n);
 
       B_c.FillBoundary(geom.periodicity());
       E_c.FillBoundary(geom.periodicity());
