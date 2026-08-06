@@ -28,8 +28,6 @@ Author(s): David Phillips
 #include <numeric>
 #include <span>
 
-#include <AMReX_Print.H>
-
 // Non-sparse Matrix class; dimensions are defined at run time but are fixed
 template <typename T>
 class matrix {
@@ -49,22 +47,43 @@ public:
    // matrix(matrix<T>&&) = default;
    // matrix<T>& operator=(matrix<T>&&) = default;
    
-   T& operator()(size_t ii, size_t jj) { return m_dat[ii*m_ncols + jj]; }
+   T& operator()(const size_t ii, const size_t jj) {
+#ifdef AMREX_DEBUG
+      assert(ii < m_nrows);
+      assert(jj < m_ncols);
+#endif
+      return m_dat[ii*m_ncols + jj];
+   }
    
-   const T& operator()(const size_t ii, const size_t jj) const { return m_dat[ii*m_ncols + jj]; }
+   const T& operator()(const size_t ii, const size_t jj) const {
+#ifdef AMREX_DEBUG
+      assert(ii < m_nrows);
+      assert(jj < m_ncols);
+#endif
+      return m_dat[ii*m_ncols + jj];
+   }
 
    // Returns span as "view" of matrix entries, i.e. no copying
    std::span<const T> slice_row_const(size_t ii) const {
+#ifdef AMREX_DEBUG
+      assert(ii < m_nrows);
+#endif
       return std::span<const T>(m_dat.data() + ii*m_ncols, m_ncols);
    }
 
    // Returns span as "view" of matrix entries, i.e. no copying
    std::span<T> slice_row(size_t ii) {
+#ifdef AMREX_DEBUG
+      assert(ii < m_nrows);
+#endif
       return std::span<T>(m_dat.data() + ii*m_ncols, m_ncols);
    }
    
    // Non-contiguous slice requires copying, so returns vector
    std::vector<T> slice_col(size_t jj) {
+#ifdef AMREX_DEBUG
+      assert(jj < m_ncols);
+#endif
       std::vector<T> ret(m_nrows, 0.0);
       for (size_t ii=0; ii<m_nrows; ++ii) {
          ret[ii] = m_dat(ii,jj);
@@ -76,6 +95,10 @@ public:
    std::array<size_t,2> size() const { return {m_nrows,m_ncols}; }
 
    static void mmult(std::span<T> ret, const matrix<T>& A, const std::span<const T> x) {
+#ifdef AMREX_DEBUG
+      assert(A.m_ncols == x.size());
+      assert(A.m_nrows == ret.size());
+#endif
       for (size_t ii=0; ii<A.m_nrows; ++ii) {
          ret[ii] = 0;
          for (size_t jj=0; jj<A.m_ncols; ++jj) {
@@ -107,6 +130,10 @@ public:
    void mmult(std::span<T> ret, const std::span<const T> x) const { mmult(ret, *this, x); }
 
    static void mmult_add(std::span<T> ret, const matrix<T>& A, const std::span<const T> x, amrex::Real a) {
+#ifdef AMREX_DEBUG
+      assert(A.m_ncols == x.size());
+      assert(A.m_nrows == ret.size());
+#endif
       for (size_t ii=0; ii<A.m_nrows; ++ii) {
          for (size_t jj=0; jj<A.m_ncols; ++jj) {
             ret[ii] += a*A.m_dat[ii*A.m_ncols + jj]*x[jj];
@@ -123,13 +150,6 @@ public:
          ret(ii,ii) = 1;
       }
       return ret;
-   }
-   
-   void print_rowsums(auto name) const {
-      for (size_t ii=0; ii<m_nrows; ++ii) {
-         const std::span<const amrex::Real> row = this->slice_row_const(ii);
-         amrex::Print() << name << "[" << ii << "] sum: " << std::reduce(row.begin(), row.end()) << std::endl;
-      }
    }
 };
 
@@ -158,6 +178,9 @@ public:
    
    // Add single entry to matrix; entry must have same row as previous and larger column index (unless it is the first entry of the row)
    void add_entry(T dat, size_t col_index) {
+#ifdef AMREX_DEBUG
+      assert(col_index < m_ncols);
+#endif
       ++m_nvals;
       m_dat.push_back(dat);
       m_col_indices.push_back(col_index);
@@ -167,6 +190,10 @@ public:
    void end_row() { m_row_indices.push_back(m_nvals); }
 
    void add_chunk(const std::vector<T>& dat, const std::vector<int>& row_indices, const std::vector<int>& col_indices) {
+#ifdef AMREX_DEBUG
+      assert(dat.size() == row_indices.size());
+      assert(dat.size() == col_indices.size());
+#endif
       this->add_rows(row_indices[0] - m_row_indices.size() + 1);
       this->add_entry(dat[0], col_indices[0]);
       for (size_t ii=1; ii<dat.size(); ++ii) {
@@ -177,21 +204,38 @@ public:
    }
 
    void add_rows(size_t num_rows) {
+#ifdef AMREX_DEBUG
+      assert(m_row_indices.size() + num_rows <= m_nrows + 1);
+#endif
       for (size_t ii=0; ii<num_rows; ++ii) {
+         this->end_row();
+      }
+   }
+
+   void add_rows(size_t start, size_t end) {
+#ifdef AMREX_DEBUG
+      assert(m_row_indices.size() + end <= m_nrows + 1 + start);
+#endif
+      for (size_t ii=start; ii<end; ++ii) {
          this->end_row();
       }
    }
 
    // Fill in extra rows of m_row_indices at end if blank
    void finalise() {
-      if (m_nrows > m_row_indices.size()) {
-         this->add_rows(m_nrows + 1 - m_row_indices.size());
-      }
+#ifdef AMREX_DEBUG
+      assert(m_row_indices.size() <= m_nrows + 1);
+#endif
+      this->add_rows(m_row_indices.size(), m_nrows + 1);
    }
    
    std::array<size_t,2> size() const { return {m_nrows,m_ncols}; }
 
    static void mmult(std::span<T> ret, const sp_matrix<T>& A, const std::span<const T> x) {
+#ifdef AMREX_DEBUG
+      assert(A.m_ncols == x.size());
+      assert(A.m_nrows == ret.size());
+#endif
       size_t ind = 0;
       for (size_t ii=0; ii<A.m_nrows; ++ii) {
          ret[ii] = 0;
@@ -225,6 +269,10 @@ public:
    void mmult(std::span<T> ret, const std::span<const T> x) const { mmult(ret, *this, x); }
 
    static void mmult_add(std::span<T> ret, const sp_matrix<T>& A, const std::span<const T> x, amrex::Real a) {
+#ifdef AMREX_DEBUG
+      assert(A.m_ncols == x.size());
+      assert(A.m_nrows == ret.size());
+#endif
       size_t ind = 0;
       for (size_t ii=0; ii<A.m_nrows; ++ii) {
          for (size_t jj=0; jj < A.m_row_indices[ii+1] - A.m_row_indices[ii]; ++jj) {
@@ -235,18 +283,6 @@ public:
    }
    
    void mmult_add(std::span<T> ret, const std::span<const T> x, amrex::Real a) const { mmult_add(ret, *this, x, a); }
-   
-   void print_rowsums(auto name) const {
-      size_t ind = 0;
-      for (size_t ii=0; ii<m_nrows; ++ii) {
-         T rowsum = 0;
-         for (size_t jj=0; jj < m_row_indices[ii+1] - m_row_indices[ii]; ++jj) {
-            rowsum += m_dat[ind];
-            ++ind;
-         }
-         amrex::Print() << name << "[" << ii << "] sum: " << rowsum << std::endl;
-      }
-   }
 };
 
 #endif
