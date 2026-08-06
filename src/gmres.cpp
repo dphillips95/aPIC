@@ -22,16 +22,16 @@ License along with this program. If not, see
 Author(s): David Phillips
 */
 
-#include <AMReX.H>
-#include <AMReX_MultiFab.H>
-#include <AMReX_GMRES.H>
-#include <AMReX_Print.H>
-
 #include <gmres.h>
 #include <constants.h>
 #include <operators.h>
 #include <math_functions.h>
 #include <matrix.h>
+
+#include <AMReX_REAL.H>
+#include <AMReX_MultiFab.H>
+#include <AMReX_GMRES.H>
+#include <AMReX_Print.H>
 
 using namespace amrex;
 

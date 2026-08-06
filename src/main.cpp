@@ -22,17 +22,18 @@ License along with this program. If not, see
 Author(s): David Phillips
 */
 
-#include <AMReX.H>
+#include <constants.h>
+#include <operators.h>
+#include <populations.h>
+#include <gmres.h>
+
+#include <AMReX_REAL.H>
+#include <AMReX_IntVect.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_ParmParse.H>
 
 #include <AMReX_PlotFileUtil.H>
 #include <AMReX_Print.H>
-
-#include <constants.h>
-#include <operators.h>
-#include <populations.h>
-#include <gmres.h>
 
 using namespace amrex;
 
@@ -301,24 +302,34 @@ int main(int argc, char* argv[]) {
          B_f[nn]->setVal(0.0);
       }
       Energy_c.setVal(0.0);
-      
       /*
-      if (ParallelDescriptor::MyProc() == dm[0]) {
+      if (my_rank == dm[0]) {
          const Array4<Real>&
             En_array = (*E_n)[0].array(),
             Bf_array_x = (*B_f[0])[0].array(),
             Bf_array_y = (*B_f[1])[0].array(),
             Bf_array_z = (*B_f[2])[0].array();
-         
-         En_array(0,0,0,0) = 0;
-         En_array(0,0,0,1) = 1;
-         En_array(0,0,0,2) = 0;
-         Bf_array_x(0,0,0) = 0;
-         Bf_array_y(0,0,0) = 1;
-         Bf_array_z(0,0,0) = 0;
+
+         ParallelFor(ba_n[0], [&](int ii, int jj, int kk) {
+            En_array(ii,jj,kk,0) = 0;
+            En_array(ii,jj,kk,1) = 0;
+            En_array(ii,jj,kk,2) = 0;
+         });
+
+         ParallelFor(ba_fx[0], [&](int ii, int jj, int kk) {
+            Bf_array_x(ii,jj,kk) = 0;
+         });
+
+         ParallelFor(ba_fy[0], [&](int ii, int jj, int kk) {
+            Bf_array_y(ii,jj,kk) = 0;
+         });
+
+         ParallelFor(ba_fz[0], [&](int ii, int jj, int kk) {
+            Bf_array_z(ii,jj,kk) = 1;
+         });
       }
       */
-      
+
       for (MFIter mfi(*E_n); mfi.isValid(); ++mfi) {
          const Box&
             bx_n = mfi.tilebox(AMReXConst::btype_n),
@@ -333,7 +344,7 @@ int main(int argc, char* argv[]) {
          
          ParallelFor(bx_n, [&](int ii, int jj, int kk) {
             // Real
-            //    x = ii*dx[0] + x_min;
+            //    x = ii*dx[0] + x_min,
             //    y = jj*dx[1] + y_min,
             //    z = kk*dx[2] + z_min;
             // En_array(ii,jj,kk,0) = 0.0;
@@ -342,9 +353,9 @@ int main(int argc, char* argv[]) {
             // En_array(ii,jj,kk,0) = jj;
             // En_array(ii,jj,kk,1) = 0.0;
             // En_array(ii,jj,kk,2) = 0.0;
-            // En_array(ii,jj,kk,1) = std::sin(2*M_PI*x/(x_max - x_min));//*std::sin(y)*std::sin(z);
-            // En_array(ii,jj,kk,2) = std::cos(2*M_PI*x/(x_max - x_min));//*std::cos(y)*std::cos(z);
-
+            // En_array(ii,jj,kk,1) = std::cos(2*M_PI*x/(x_max - x_min))*std::sin(2*M_PI*y/(y_max - y_min))*std::sin(2*M_PI*z/(z_max - z_min));
+            // En_array(ii,jj,kk,2) = std::sin(2*M_PI*x/(x_max - x_min))*std::cos(2*M_PI*y/(y_max - y_min))*std::cos(2*M_PI*z/(z_max - z_min));
+            
             for (std::string tmp : Etype) {
                if (tmp == "uniform") {
                   En_array(ii,jj,kk,0) += Ex;
@@ -364,7 +375,7 @@ int main(int argc, char* argv[]) {
             //    y = (jj+0.5)*dx[1] + y_min,
             //    z = (kk+0.5)*dx[2] + z_min;
             // Bf_array_x(ii,jj,kk) = 0.0;
-
+            
             for (std::string tmp : Btype) {
                if (tmp == "uniform") {
                   Bf_array_x(ii,jj,kk) += Bx;
@@ -380,7 +391,7 @@ int main(int argc, char* argv[]) {
             //    y = jj*dx[1] + y_min,
             //    z = (kk+0.5)*dx[2] + z_min;
             // Bf_array_y(ii,jj,kk) = ii;
-
+            
             for (std::string tmp : Btype) {
                if (tmp == "uniform") {
                   Bf_array_y(ii,jj,kk) += By;
@@ -396,7 +407,7 @@ int main(int argc, char* argv[]) {
             //    y = (jj+0.5)*dx[1] + y_min,
             //    z = kk*dx[2] + z_min;
             // Bf_array_z(ii,jj,kk) = ii*ii;
-
+            
             for (std::string tmp : Btype) {
                if (tmp == "uniform") {
                   Bf_array_z(ii,jj,kk) += Bz;

@@ -25,9 +25,10 @@ Author(s): David Phillips
 #ifndef OPERATORS_H_
 #define OPERATORS_H_
 
-#include <AMReX_REAL.H>
-
 #include <constants.h>
+
+#include <AMReX_REAL.H>
+#include <AMReX_MultiFab.H>
 
 /*
   Face and edge data must be stored in seperate MultiFabs per face or edge direction

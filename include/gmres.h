@@ -25,16 +25,16 @@ Author(s): David Phillips
 #ifndef GMRES_H_
 #define GMRES_H_
 
+#include <constants.h>
+#include <math_functions.h>
+#include <matrix.h>
+#include <operators.h>
+
 #include <AMReX_REAL.H>
 #include <AMReX_GMRES.H>
 #include <AMReX_iMultiFab.H>
 
 #include <cmath>
-
-#include <matrix.h>
-#include <constants.h>
-#include <operators.h>
-#include <math_functions.h>
 
 // GMRES "vector" class; consists of B and E MultiFabs
 // Due to staggered grid, face B multiFabs are separated while node E is kept together
@@ -286,19 +286,6 @@ public:
             x_Bfy_span(x_Bfy_data.dataPtr(0), total_x_Bfy),
             x_Bfz_span(x_Bfz_data.dataPtr(0), total_x_Bfz);
          
-         // BL_PROFILE_VAR("apply_matrix_B2E::mmult()", TIMER_mmult);
-         // std::vector<Real>
-         //    tmp_x = matA_Bx2E_mf.mmult(x_Bfx_span),
-         //    tmp_y = matA_By2E_mf.mmult(x_Bfy_span),
-         //    tmp_z = matA_Bz2E_mf.mmult(x_Bfz_span);
-         // BL_PROFILE_VAR_STOP(TIMER_mmult);
-         
-         // for (size_t ii=0; ii<total_Ax_En; ++ii) {
-         //    Ax_Enx_span[ii] += tmp_x[ii]*fact;
-         //    Ax_Eny_span[ii] += tmp_y[ii]*fact;
-         //    Ax_Enz_span[ii] += tmp_z[ii]*fact;
-         // }
-         
          BL_PROFILE_VAR("apply_matrix_B2E::mmult_add()", TIMER_mmult_add);
          matA_Bx2E_mf.mmult_add(Ax_En_span, x_Bfx_span, fact);
          matA_By2E_mf.mmult_add(Ax_En_span, x_Bfy_span, fact);
@@ -330,36 +317,19 @@ public:
             len_Ax_Bfx = Ax_Bfx_data.length(),
             len_Ax_Bfy = Ax_Bfy_data.length(),
             len_Ax_Bfz = Ax_Bfz_data.length(),
-            len_x_En = x_En_data.length();
+            len_x_En   = x_En_data.length();
          
          const size_t
             total_Ax_Bfx = math::product(len_Ax_Bfx),
             total_Ax_Bfy = math::product(len_Ax_Bfy),
             total_Ax_Bfz = math::product(len_Ax_Bfz),
-            total_x_En = math::product(len_x_En);
+            total_x_En   = math::product(len_x_En);
          
          std::span<amrex::Real> Ax_Bfx_span(Ax_Bfx_data.dataPtr(0), total_Ax_Bfx);
          std::span<amrex::Real> Ax_Bfy_span(Ax_Bfy_data.dataPtr(0), total_Ax_Bfy);
          std::span<amrex::Real> Ax_Bfz_span(Ax_Bfz_data.dataPtr(0), total_Ax_Bfz);
          const std::span<const amrex::Real>
             x_En_span(x_En_data.dataPtr(0), 3*total_x_En);
-         
-         // BL_PROFILE_VAR("apply_matrix_E2B::mmult()", TIMER_mmult);
-         // std::vector<Real>
-         //    tmp_x = matA_E2Bx_mf.mmult(x_En_span),
-         //    tmp_y = matA_E2By_mf.mmult(x_En_span),
-         //    tmp_z = matA_E2Bz_mf.mmult(x_En_span);
-         // BL_PROFILE_VAR_STOP(TIMER_mmult);
-         
-         // for (size_t ii=0; ii<total_Ax_Bfx; ++ii) {
-         //    Ax_Bfx_span[ii] += tmp_x[ii]*fact;
-         // }
-         // for (size_t ii=0; ii<total_Ax_Bfx; ++ii) {
-         //    Ax_Bfy_span[ii] += tmp_y[ii]*fact;
-         // }
-         // for (size_t ii=0; ii<total_Ax_Bfx; ++ii) {
-         //    Ax_Bfz_span[ii] += tmp_z[ii]*fact;
-         // }
          
          BL_PROFILE_VAR("apply_matrix_E2B::mmult_add()", TIMER_mmult_add);
          matA_E2Bx_mf.mmult_add(Ax_Bfx_span, x_En_span, fact);
@@ -369,8 +339,34 @@ public:
       }
    }
    
-   // template <typename T>
-   // static void apply_matrix_E2E(BE& Ax, const BE& x, const amrex::LayoutData<T>& matA_E2E);
+   template <typename T>
+   static void apply_matrix_E2E(BE& Ax, const BE& x, const amrex::LayoutData<T>& matA_E2E, amrex::Real fact) {
+      amrex::MultiFab&       Ax_En { Ax.getE_n()      };
+      const amrex::MultiFab& x_En  { x.getE_n_const() };
+      
+      for (amrex::MFIter mfi(x_En); mfi.isValid(); ++mfi) {
+         const T& matA_E2E_mf { matA_E2E[mfi] };
+         
+         amrex::FArrayBox&       Ax_En_data { Ax_En[mfi] };
+         const amrex::FArrayBox& x_En_data  { x_En[mfi]  };
+         
+         const amrex::IntVect
+            len_Ax_En = Ax_En_data.length(),
+            len_x_En  = x_En_data.length();
+         
+         const size_t
+            total_Ax_En = math::product(len_Ax_En),
+            total_x_En  = math::product(len_x_En);
+         
+         std::span<amrex::Real> Ax_En_span(Ax_En_data.dataPtr(0), 3*total_Ax_En);
+         const std::span<const amrex::Real>
+            x_En_span(x_En_data.dataPtr(0), 3*total_x_En);
+         
+         BL_PROFILE_VAR("apply_matrix_E2E::mmult_add()", TIMER_mmult_add);
+         matA_E2E_mf.mmult_add(Ax_En_span, x_En_span, fact);
+         BL_PROFILE_VAR_STOP(TIMER_mmult_add);
+      }
+   }
 };
 
 // Generic GMRES linear operator class; all methods are implemented except for apply(), constructor can be overriden
@@ -492,7 +488,7 @@ class linop_matrix: public linop {
 private:
    std::array<amrex::LayoutData<T>,3> m_matA_B2E; // magnetic effect on electric (curl B), each component of B input is separated into different matrices - only changes when BoxArray changes
    std::array<amrex::LayoutData<T>,3> m_matA_E2B; // electric effect on magnetic (curl E), each component of B output is separated into different matrices - only changes when BoxArray changes
-   amrex::LayoutData<T> m_matA_E2E; // electric self-interaction, current only (remainder is identity matrix) - this is the only matrix component that changes every time step
+   amrex::LayoutData<T> m_matA_E2E; // electric self-interaction (particle current) - changes every time step
 public:
    linop_matrix(const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, int nghost, const amrex::GpuArray<RT,3>& dx, RT tFactor, const amrex::Periodicity& period, const std::array<amrex::LayoutData<T>,3>& matA_B2E, const std::array<amrex::LayoutData<T>,3>& matA_E2B, const amrex::LayoutData<T> matA_E2E) : linop { ba, dm, nghost, dx, tFactor, period }, m_matA_B2E(matA_B2E), m_matA_E2B(matA_E2B), m_matA_E2E(matA_E2E) {}
    
@@ -510,7 +506,7 @@ public:
       BL_PROFILE_VAR_STOP(TIMER_curl_Bf);
       
       // BL_PROFILE_VAR("gmres_current",TIMER_current);
-      // apply_matrix_E2E(Ax, x, m_matA_E2E);
+      // apply_matrix_E2E(Ax, x, m_matA_E2E, m_tFactor/PhysConst::eps0);
       // BL_PROFILE_VAR_STOP(TIMER_current);
    }
 };
