@@ -44,6 +44,8 @@ int main(int argc, char* argv[]) {
       
       constexpr int nghost = 1;
       constexpr IntVect vectghost(nghost,nghost,nghost);
+      const int nprocs = ParallelDescriptor::NProcs();
+      const int my_rank = ParallelDescriptor::MyProc();
       
       int x_size, y_size, z_size;
       Real
@@ -53,7 +55,7 @@ int main(int argc, char* argv[]) {
 
       Array<int,3> periodicity = {false,false,false};
 
-      const int nprocs = ParallelDescriptor::NProcs();
+
       
       int max_grid_size = 10;
 
@@ -193,7 +195,8 @@ int main(int argc, char* argv[]) {
          }
       }
 
-      InitRandom(seed, nprocs, 0);
+      // Add process rank to seed to ensure each process has a different seed
+      InitRandom(seed + my_rank, nprocs, 0);
       
       std::ofstream datalog(Log::fieldlog_filename);
       
@@ -424,16 +427,18 @@ int main(int argc, char* argv[]) {
       //    omask_fy_ghost(*B_f[1], geom.periodicity(), vectghost),
       //    omask_fz_ghost(*B_f[2], geom.periodicity(), vectghost),
       //    omask_n_ghost(*E_n, geom.periodicity(), vectghost);
-
-      E_n->OverrideSync(geom.periodicity());
-      for (int nn=0; nn<3; ++nn) {
-         B_f[nn]->OverrideSync(geom.periodicity());
-      }
       
       // Ensure boundary conditions were not violated in last step
       E_n->FillBoundary(geom.periodicity());
       for (int nn=0; nn<3; ++nn) {
          B_f[nn]->FillBoundary(geom.periodicity());
+      }
+
+      // Forces valid data points shared between boxes to be equal
+      // May be unnecessary - EnforcePeriodicity() probably already does this?
+      E_n->OverrideSync(geom.periodicity());
+      for (int nn=0; nn<3; ++nn) {
+         B_f[nn]->OverrideSync(geom.periodicity());
       }
 
       // Generate curl operators
