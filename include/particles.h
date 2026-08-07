@@ -1,5 +1,5 @@
 /*
-Populations header, containing population class for aPIC.
+Particles header, containing particle methods etc. for aPIC.
 
 Copyright 2026 Finnish Meteorological Institute.
 

@@ -24,7 +24,7 @@ Author(s): David Phillips
 
 #include <constants.h>
 #include <operators.h>
-#include <populations.h>
+#include <particles.h>
 #include <gmres.h>
 
 #include <AMReX_REAL.H>
