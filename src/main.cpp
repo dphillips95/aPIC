@@ -28,6 +28,7 @@ Author(s): David Phillips
 #include <gmres.h>
 
 #include <AMReX_REAL.H>
+#include <AMReX_Geometry.H>
 #include <AMReX_IntVect.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_ParmParse.H>
@@ -45,9 +46,10 @@ int main(int argc, char* argv[]) {
       
       constexpr int nghost = 1;
       constexpr IntVect vectghost(nghost,nghost,nghost);
-      const int nprocs = ParallelDescriptor::NProcs();
-      const int my_rank = ParallelDescriptor::MyProc();
       
+      const int nprocs = amrex::ParallelDescriptor::NProcs();
+      const int myRank = amrex::ParallelDescriptor::MyProc();
+ 
       int x_size, y_size, z_size;
       Real
          x_min = 0.0, x_max = 1.0,
@@ -55,8 +57,6 @@ int main(int argc, char* argv[]) {
          z_min = 0.0, z_max = 1.0;
 
       Array<int,3> periodicity = {false,false,false};
-
-
       
       int max_grid_size = 10;
 
@@ -77,6 +77,7 @@ int main(int argc, char* argv[]) {
       int verbosity = 0;
       
       std::vector<Population> pop_list;
+      size_t pop_count;
       
       {
          // Get inputs with ParmParse
@@ -192,12 +193,15 @@ int main(int argc, char* argv[]) {
                tmp.mass /= mass_ratio;
             }
 
+            tmp.vth = std::sqrt(PhysConst::k*tmp.temperature/tmp.mass);
+            
             pop_list.push_back(tmp);
          }
+         pop_count = pop_list.size();
       }
 
       // Add process rank to seed to ensure each process has a different seed
-      InitRandom(seed + my_rank, nprocs, 0);
+      InitRandom(seed + myRank, nprocs, 0);
       
       std::ofstream datalog(Log::fieldlog_filename);
       
@@ -235,13 +239,17 @@ int main(int argc, char* argv[]) {
 
       // Vector containing B_f and E_n states
       BE EM_state(ba_n, dm, nghost, geom.periodicity());
-
+      
       MultiFab* E_n = &EM_state.getE_n();
       std::array<MultiFab*,3> B_f = {
          &EM_state.getB_fx(),
          &EM_state.getB_fy(),
          &EM_state.getB_fz()
       };
+
+      // Vector of particle containers
+      std::vector<myPContainer> pContainer_list;
+      pContainer_list.reserve(pop_count);
       
       MultiFab
          Jp_c(ba_c, dm, 3, nghost),
@@ -249,7 +257,7 @@ int main(int argc, char* argv[]) {
          B_c(ba_c, dm, 3, nghost),
          E_c(ba_c, dm, 3, nghost),
          Energy_c(ba_c, dm, 3, nghost);
-
+      
       // std::array<MultiFab,3> B_f = {
       //    MultiFab(ba_fx, dm, 1, nghost),
       //    MultiFab(ba_fy, dm, 1, nghost),
@@ -303,7 +311,7 @@ int main(int argc, char* argv[]) {
       }
       Energy_c.setVal(0.0);
       /*
-      if (my_rank == dm[0]) {
+      if (myRank == dm[0]) {
          const Array4<Real>&
             En_array = (*E_n)[0].array(),
             Bf_array_x = (*B_f[0])[0].array(),
@@ -330,6 +338,7 @@ int main(int argc, char* argv[]) {
       }
       */
 
+      // B-E fields initial condition
       for (MFIter mfi(*E_n); mfi.isValid(); ++mfi) {
          const Box&
             bx_n = mfi.tilebox(AMReXConst::btype_n),
@@ -418,6 +427,12 @@ int main(int argc, char* argv[]) {
          });
       }
 
+      // Particles initial condition; fill with uniform distribution
+      for (size_t ii=0; ii<pop_count; ++ii) {
+         pContainer_list.emplace_back(geom, dm, ba_c);
+         uniform_injector(pContainer_list[ii], pop_list[ii]);
+      }
+      
       // Boundary conditions
       E_n->FillBoundary(geom.periodicity());
       for (int nn=0; nn<3; ++nn) {
