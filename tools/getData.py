@@ -49,8 +49,19 @@ def getData(proc,nx,ny,nz):
    proc_name = proc.split('.')[0]
    print("Reading Data from " + proc_name)
    with h5py.File(proc, 'r') as f:
-      field_data = np.array(f['level_0']['data:datatype=0']).reshape(-1,nx,ny,nz)
-      data = dict(zip(field_list,np.array(field_data)))
+      box_ends = np.array([tuple(j) for j in f['level_0']['boxes']])
+      box_offsets = np.array(f["level_0"]["data:offsets=0"])
+      
+      field_data = np.array(f['level_0']['data:datatype=0'])
+
+      split_data = [np.transpose(x.reshape(-1,y[5]-y[2]+1,y[4]-y[1]+1,y[3]-y[0]+1), (0,3,2,1)) for x,y in zip(np.split(field_data, box_offsets[1:-1]),box_ends)]
+
+      full_data = np.empty((field_data.size//(nx*ny*nz),nx,ny,nz), dtype = field_data.dtype)
+      
+      for box,ends in zip(split_data,box_ends):
+         full_data[:,ends[0]:ends[3]+1,ends[1]:ends[4]+1,ends[2]:ends[5]+1] = box
+      
+      data = dict(zip(field_list,full_data))
    
    return data
 
@@ -96,13 +107,29 @@ with open('input.cfg', 'r') as f:
                   params["z_min"] = float(value)
                case "z_max":
                   params["z_max"] = float(value)
+               case "dx":
+                  params["dx"] = float(value)
+               case "dy":
+                  params["dy"] = float(value)
+               case "dz":
+                  params["dz"] = float(value)
                case "x_size":
                   params["nx"] = int(value)
                case "y_size":
                   params["ny"] = int(value)
                case "z_size":
                   params["nz"] = int(value)
-               
+
+   if "dx" in params.keys():
+      params["x_min"] = -params["dx"]*params["nx"]/2
+      params["x_max"] = params["dx"]*params["nx"]/2
+   if "dy" in params.keys():
+      params["y_min"] = -params["dy"]*params["ny"]/2
+      params["y_max"] = params["dy"]*params["ny"]/2
+   if "dz" in params.keys():
+      params["z_min"] = -params["dz"]*params["nz"]/2
+      params["z_max"] = params["dz"]*params["nz"]/2
+   
    params["Lx"] = params["x_max"] - params["x_min"]
    params["Ly"] = params["y_max"] - params["y_min"]
    params["Lz"] = params["z_max"] - params["z_min"]

@@ -715,7 +715,7 @@ def getv0(n_dat, v_dat, t_pt):
       m_tmp[:,:,i] = n_dat[:,t_pt,:]*v_dat[:,t_pt,:,i]
       for j in range(v_dat_shape[1]):
          if n_dat_tot[t_pt,j] == 0:
-            v0_tmp[j,i] = float("NaN")
+            v0_tmp[j,i] = np.nan
          else:
             v0_tmp[j,i] = np.sum(m_tmp[:,j,i],axis = 0)/n_dat_tot[t_pt,j]
    

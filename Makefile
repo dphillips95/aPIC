@@ -1,12 +1,12 @@
 AMREX_HOME ?= $(HOME)/amrex
-HDF5_HOME ?= /usr/lib/x86_64-linux-gnu/hdf5/serial
+HDF5_HOME ?= /usr/lib/x86_64-linux-gnu/hdf5/openmpi
 
 DEBUG = FALSE
 COMP = gnu
 CXXSTD = c++23
 DIM = 3
 USE_PARTICLES = TRUE
-USE_MPI = FALSE
+USE_MPI = TRUE
 USE_OMP = FALSE
 USE_CUDA = FALSE
 USE_HIP = FALSE
