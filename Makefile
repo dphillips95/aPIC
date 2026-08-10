@@ -1,7 +1,6 @@
 AMREX_HOME ?= $(HOME)/amrex
 HDF5_HOME ?= /usr/lib/x86_64-linux-gnu/hdf5/openmpi
 
-
 DEBUG = FALSE
 COMP = gnu
 CXXSTD = c++23
