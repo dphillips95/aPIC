@@ -29,6 +29,7 @@ Author(s): David Phillips, Ilja Honkonen
 #include <AMReX_Particles.H>
 
 struct Population {
+   std::string name; // Population name
    amrex::Real mass = 0.0; // Mass per particle
    amrex::Real charge = 0.0; // Charge per particle
    amrex::Real temperature = 0.0;
@@ -60,11 +61,17 @@ using myPContainer = amrex::ParticleContainer<
    static_cast<int>(Particle_real_extra::size), static_cast<int>(Particle_int_extra::size), 0, 0>;
 using myPType = myPContainer::ParticleType;
 using myPIter = myPContainer::ParIterType;
+using myPIterConst = myPContainer::ParConstIterType;
 using myPTile = myPContainer::ParticleTileType;
 using myPLevel = myPContainer::ParticleLevel;
+using myAoS = myPContainer::AoS;
+using mySoA = myPContainer::SoA;
 
 void uniform_injector(myPContainer& pContainer, const Population& pop);
 
 void fill_particles_cell(myPTile& parts, const size_t count, const amrex::Real vth, const std::vector<amrex::Real> velocity, const amrex::Real weight, amrex::GpuArray<amrex::Real,3> r_min, amrex::GpuArray<amrex::Real,3> r_max);
+
+void accumulateDensityCurrentKE(amrex::MultiFab& density, amrex::MultiFab& current, amrex::MultiFab& KE_Energy, const myPContainer& pContainer, const Population& pop);
+void accumulateTemperature(amrex::MultiFab& temperature, const amrex::MultiFab& velocity, const myPContainer& pContainer, const Population& pop);
 
 #endif

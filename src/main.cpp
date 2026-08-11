@@ -22,6 +22,7 @@ License along with this program. If not, see
 Author(s): David Phillips
 */
 
+#include <output.h>
 #include <constants.h>
 #include <operators.h>
 #include <particles.h>
@@ -33,7 +34,6 @@ Author(s): David Phillips
 #include <AMReX_MultiFab.H>
 #include <AMReX_ParmParse.H>
 
-#include <AMReX_PlotFileUtil.H>
 #include <AMReX_Print.H>
 
 using namespace amrex;
@@ -177,6 +177,8 @@ int main(int argc, char* argv[]) {
             Population tmp;
             
             ParmParse inp_pop(pop);
+
+            tmp.name = pop;
             
             bool electron;
             
@@ -202,13 +204,9 @@ int main(int argc, char* argv[]) {
 
       // Add process rank to seed to ensure each process has a different seed
       InitRandom(seed + myRank, nprocs, 0);
-      
+
       std::ofstream datalog(Log::fieldlog_filename);
-      
-      datalog << std::setw(Log::stepWidth) << "Step"
-              << std::setw(Log::datWidth) << "B_energy"
-              << std::setw(Log::datWidth) << "E_energy"
-              << std::setw(Log::datWidth) << "Total_energy" << std::endl;
+      initialise_datalog(datalog);
       
       Box
          box_c(IntVect{0,0,0}, IntVect{x_size-1, y_size-1, z_size-1}); // cell-centred
@@ -250,13 +248,6 @@ int main(int argc, char* argv[]) {
       // Vector of particle containers
       std::vector<myPContainer> pContainer_list;
       pContainer_list.reserve(pop_count);
-      
-      MultiFab
-         Jp_c(ba_c, dm, 3, nghost),
-         B_n(ba_n, dm, 3, nghost),
-         B_c(ba_c, dm, 3, nghost),
-         E_c(ba_c, dm, 3, nghost),
-         Energy_c(ba_c, dm, 3, nghost);
       
       // std::array<MultiFab,3> B_f = {
       //    MultiFab(ba_fx, dm, 1, nghost),
@@ -302,14 +293,12 @@ int main(int argc, char* argv[]) {
       };
       LayoutData<sp_matrix<Real>> matA_E2E(ba_c,dm);
       
-      Jp_c.setVal(0.0);
-      B_n.setVal(0.0);
       E_n->setVal(0.0);
       for (int nn=0; nn<3; ++nn) {
          Jp_f[nn].setVal(0.0);
          B_f[nn]->setVal(0.0);
       }
-      Energy_c.setVal(0.0);
+      
       /*
       if (myRank == dm[0]) {
          const Array4<Real>&
@@ -651,72 +640,7 @@ int main(int argc, char* argv[]) {
          Print()  << std::endl << "Step: " << step << std::endl;
          
          if (step % save_steps == 0) {
-            const std::string& pltfile = amrex::Concatenate("plt", step, 5);
-            
-            MultiFab plt_Fab(ba_c, dm, 9, nghost);
-            
-            B_c = face2cell(*B_f[0], *B_f[1], *B_f[2]);
-            E_c = node2cell(*E_n);
-            
-            B_c.FillBoundary(geom.periodicity());
-            E_c.FillBoundary(geom.periodicity());
-            
-            Energy_c.setVal(0.0);
-            
-            Energy_c = compute_EM_energy(B_c,E_c);
-            /*
-            E_c.setVal(0.0);
-            B_c.setVal(0.0);
-            Energy_c.setVal(0.0);
-
-            for (MFIter mfi(B_c); mfi.isValid(); ++mfi) {
-               const Box& bx_c = mfi.tilebox(AMReXConst::btype_c);
-               const Array4<Real>&
-                  Bc_array = B_c.array(mfi),
-                  Ec_array = E_c.array(mfi),
-                  EMc_array = Energy_c.array(mfi);
-
-               ParallelFor(bx_c, [&](int ii, int jj, int kk) {
-                  Bc_array(ii,jj,kk,0) = ((kk*y_size + jj)*x_size + ii)*9 + 0;
-                  Bc_array(ii,jj,kk,1) = ((kk*y_size + jj)*x_size + ii)*9 + 1;
-                  Bc_array(ii,jj,kk,2) = ((kk*y_size + jj)*x_size + ii)*9 + 2;
-                  Ec_array(ii,jj,kk,0) = ((kk*y_size + jj)*x_size + ii)*9 + 3;
-                  Ec_array(ii,jj,kk,1) = ((kk*y_size + jj)*x_size + ii)*9 + 4;
-                  Ec_array(ii,jj,kk,2) = ((kk*y_size + jj)*x_size + ii)*9 + 5;
-                  EMc_array(ii,jj,kk,0) = ((kk*y_size + jj)*x_size + ii)*9 + 6;
-                  EMc_array(ii,jj,kk,1) = ((kk*y_size + jj)*x_size + ii)*9 + 7;
-                  EMc_array(ii,jj,kk,2) = ((kk*y_size + jj)*x_size + ii)*9 + 8;
-               });
-            }
-            */
-            Real
-               total_B_energy = 0.0,
-               total_E_energy = 0.0,
-               total_EM_energy = 0.0;
-
-            for (MFIter mfi(Energy_c); mfi.isValid(); ++mfi) {
-               const Box& bx_c = mfi.tilebox(AMReXConst::btype_c);
-               const Array4<Real>& Energy_c_array = Energy_c.array(mfi);
-
-               ParallelFor(bx_c, [&](int ii, int jj, int kk) {
-                  total_B_energy += Energy_c_array(ii,jj,kk,0);
-                  total_E_energy += Energy_c_array(ii,jj,kk,1);
-                  total_EM_energy += Energy_c_array(ii,jj,kk,2);
-               });
-            }
-            
-            datalog << std::setw(Log::stepWidth) << step
-                    << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_B_energy
-                    << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_E_energy
-                    << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_EM_energy << std::endl;
-
-            plt_Fab.setVal(0.0);
-            
-            MultiFab::Copy(plt_Fab, B_c, 0, 0, 3, nghost);
-            MultiFab::Copy(plt_Fab, E_c, 0, 3, 3, nghost);
-            MultiFab::Copy(plt_Fab, Energy_c, 0, 6, 3, nghost);
-            
-            WriteSingleLevelPlotfileHDF5(pltfile, plt_Fab, {"Bx","By","Bz","Ex","Ey","Ez","B_Energy","E_Energy","EM_Energy"}, geom, time, step);
+            saveState(step, time, EM_state, pContainer_list, pop_list, geom, datalog);
          }
 
          // gmres_step(EM_state, dx, dt, theta, rtol, atol, verbosity);
@@ -740,48 +664,7 @@ int main(int argc, char* argv[]) {
          
          time += dt;
       }
-      const std::string& pltfile = amrex::Concatenate("plt", steps, 5);
-      
-      MultiFab plt_Fab(ba_c, dm, 9, nghost);
-      
-      B_c = face2cell(*B_f[0], *B_f[1], *B_f[2]);
-      E_c = node2cell(*E_n);
-
-      B_c.FillBoundary(geom.periodicity());
-      E_c.FillBoundary(geom.periodicity());
-
-      Energy_c.setVal(0.0);
-      
-      Energy_c = compute_EM_energy(B_c,E_c);
-
-      Real
-         total_B_energy = 0.0,
-         total_E_energy = 0.0,
-         total_EM_energy = 0.0;
-      
-      for (MFIter mfi(Energy_c); mfi.isValid(); ++mfi) {
-         const Box& bx_c = mfi.tilebox(AMReXConst::btype_c);
-         const Array4<Real>& Energy_c_array = Energy_c.array(mfi);
-         
-         ParallelFor(bx_c, [&](int ii, int jj, int kk) {
-            total_B_energy += Energy_c_array(ii,jj,kk,0);
-            total_E_energy += Energy_c_array(ii,jj,kk,1);
-            total_EM_energy += Energy_c_array(ii,jj,kk,2);
-         });
-      }
-      
-      datalog << std::setw(Log::stepWidth) << steps
-              << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_B_energy
-              << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_E_energy
-              << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_EM_energy << std::endl;
-
-      plt_Fab.setVal(0.0);
-      
-      MultiFab::Copy(plt_Fab, B_c, 0, 0, 3, nghost);
-      MultiFab::Copy(plt_Fab, E_c, 0, 3, 3, nghost);
-      MultiFab::Copy(plt_Fab, Energy_c, 0, 6, 3, nghost);
-      
-      WriteSingleLevelPlotfileHDF5(pltfile, plt_Fab, {"Bx","By","Bz","Ex","Ey","Ez","B_Energy","E_Energy","EM_Energy"}, geom, time, steps);
+      saveState(steps, time, EM_state, pContainer_list, pop_list, geom, datalog);
    }
 
    BL_PROFILE_VAR_STOP(pmain);

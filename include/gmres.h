@@ -776,27 +776,4 @@ inline std::array<sp_matrix<amrex::Real>,3> get_curl_n2f_operator_sparse(const a
    return ret;
 }
 
-// Get cell (or node etc.) ID from given cell indices of cell in box
-// If the box has ghost cells then index needs to be shifted to accomodate
-inline int get_cellID(int x_index, int y_index, int z_index, const amrex::IntVect& len, int nghost = 0) {
-   x_index += nghost;
-   y_index += nghost;
-   z_index += nghost;
-   return (z_index*len[1] + y_index)*len[0] + x_index;
-}
-// Get cell (or node etc.) ID from given cell indices of cell in box
-// If the box has ghost cells then index needs to be shifted to accomodate
-inline int get_cellID(amrex::IntVect cell_indices, const amrex::IntVect& len, int nghost = 0) {
-   cell_indices += nghost;
-   return get_cellID(cell_indices[0], cell_indices[1], cell_indices[2], len);
-}
-
-inline amrex::IntVect get_cell_indices(int cellID, const amrex::IntVect& len, int nghost = 0) {
-   int
-      x_index = cellID%len[0]          - nghost,
-      y_index = (cellID/len[0])%len[1] - nghost,
-      z_index = cellID/(len[0]*len[1]) - nghost;
-   return amrex::IntVect(x_index,y_index,z_index);
-}
-
 #endif

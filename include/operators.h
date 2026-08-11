@@ -30,6 +30,8 @@ Author(s): David Phillips
 #include <AMReX_REAL.H>
 #include <AMReX_MultiFab.H>
 
+#include <cmath>
+
 /*
   Face and edge data must be stored in seperate MultiFabs per face or edge direction
   Thus the standard in aPIC is a std::array of three MultiFabs
@@ -283,7 +285,41 @@ inline amrex::MultiFab div_n2c(const amrex::MultiFab& node_data, const amrex::Gp
    return cell_div;
 }
 
-// Tests
+// Indexers
+// Get cell (or node etc.) ID from given cell indices of cell in box
+// If the box has ghost cells then index needs to be shifted to accomodate
+inline int get_cellID(int x_index, int y_index, int z_index, const amrex::IntVect& len, int nghost = 0) {
+   x_index += nghost;
+   y_index += nghost;
+   z_index += nghost;
+   return (z_index*len[1] + y_index)*len[0] + x_index;
+}
+
+inline int get_cellID(amrex::IntVect cell_indices, const amrex::IntVect& len, int nghost = 0) {
+   cell_indices += nghost;
+   return get_cellID(cell_indices[0], cell_indices[1], cell_indices[2], len);
+}
+
+// Get cell indices from given cellID
+inline amrex::IntVect get_cell_indices(int cellID, const amrex::IntVect& len, int nghost = 0) {
+   int
+      x_index = cellID%len[0]          - nghost,
+      y_index = (cellID/len[0])%len[1] - nghost,
+      z_index = cellID/(len[0]*len[1]) - nghost;
+   return amrex::IntVect(x_index,y_index,z_index);
+}
+
+// Get (global) cell indices from true domain position
+inline amrex::IntVect get_pos_indices(amrex::Real xpos, amrex::Real ypos, amrex::Real zpos, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min, const amrex::IntVect& index_type = amrex::IntVect::TheZeroVector()) {
+   amrex::IntVect ret = {
+      int(floor((xpos - dom_min[0])/dx[0] + index_type[0]/2)),
+      int(floor((ypos - dom_min[1])/dx[1] + index_type[1]/2)),
+      int(floor((zpos - dom_min[2])/dx[2] + index_type[2]/2))
+   };
+   return ret;
+}
+
+// Check symmetry in given direction (i.e. check if constant along given direction(s)
 bool sym_test(const amrex::MultiFab& mf, const amrex::IntVect& dir);
 
 #endif

@@ -22,6 +22,7 @@ License along with this program. If not, see
 Author(s): David Phillips, Ilja Honkonen
 */
 
+#include <operators.h>
 #include <particles.h>
 #include <math_functions.h>
 #include <constants.h>
@@ -29,6 +30,8 @@ Author(s): David Phillips, Ilja Honkonen
 #include <AMReX_REAL.H>
 #include <AMReX_Geometry.H>
 #include <AMReX_Particles.H>
+
+#include <AMReX_Print.H>
 
 using namespace amrex;
 
@@ -41,7 +44,7 @@ void uniform_injector(myPContainer& pContainer, const Population& pop) {
    
    const Geometry& geom = pContainer.Geom(lev);
    
-   GpuArray<Real,3>
+   const GpuArray<Real,3>
       dom_min = geom.ProbLoArray(),
       dx = geom.CellSizeArray();
 
@@ -85,4 +88,68 @@ void fill_particles_cell(myPTile& parts, const size_t count, const Real vth, con
 
       parts.push_back(particle);
    }
+}
+
+// Accumulates number density, current and kinetic energy simultaneously
+// Note: Density and current should be set to zero beforehand
+// Also Note: This and accumulateTemperature assume that particle and multifab boxes line up
+void accumulateDensityCurrentKE(MultiFab& density, MultiFab& current, MultiFab& KE_Energy, const myPContainer& pContainer, const Population& pop) {
+   // AMR level, currently no amr so = 0
+   constexpr int lev = 0;
+
+   const GpuArray<Real,3>
+      dom_min = pContainer.Geom(lev).ProbLoArray(),
+      dx = pContainer.Geom(lev).CellSizeArray();
+   
+   for (myPIterConst pti(pContainer, lev); pti.isValid(); ++pti) {
+      const Array4<Real>& density_array = density.array(pti);
+      const Array4<Real>& current_array = current.array(pti);
+      const Array4<Real>& KE_Energy_array = KE_Energy.array(pti);
+      
+      const auto& particles = pti.GetArrayOfStructs();
+
+      for (const auto& p : particles) {
+         const IntVect p_indices { get_pos_indices(p.pos(0), p.pos(1), p.pos(2), dx, dom_min, AMReXConst::btype_c) };
+         
+         density_array(p_indices[0],p_indices[1],p_indices[2]) += p.rdata(pExtra_real_ind::weight_i);
+         
+         current_array(p_indices[0],p_indices[1],p_indices[2],0) += p.rdata(pExtra_real_ind::vx_i)*p.rdata(pExtra_real_ind::weight_i)*pop.charge;
+         current_array(p_indices[0],p_indices[1],p_indices[2],1) += p.rdata(pExtra_real_ind::vy_i)*p.rdata(pExtra_real_ind::weight_i)*pop.charge;
+         current_array(p_indices[0],p_indices[1],p_indices[2],2) += p.rdata(pExtra_real_ind::vz_i)*p.rdata(pExtra_real_ind::weight_i)*pop.charge;
+
+         KE_Energy_array(p_indices[0],p_indices[1],p_indices[2]) += pop.mass*p.rdata(pExtra_real_ind::weight_i)*(math::square(p.rdata(pExtra_real_ind::vx_i)) + math::square(p.rdata(pExtra_real_ind::vy_i)) + math::square(p.rdata(pExtra_real_ind::vz_i)));
+
+         // Print() << density_array(p_indices[0],p_indices[1],p_indices[2]) << std::endl;
+      }
+   }
+}
+
+// Accumulates temperature. Note: should be set to zero beforehand
+void accumulateTemperature(MultiFab& temperature, const MultiFab& velocity, const myPContainer& pContainer, const Population& pop) {
+   int lev = 0;
+
+   const GpuArray<Real,3>
+      dom_min = pContainer.Geom(lev).ProbLoArray(),
+      dx = pContainer.Geom(lev).CellSizeArray();
+   
+   for (myPIterConst pti(pContainer, lev); pti.isValid(); ++pti) {
+      const Array4<Real>& temperature_array = temperature.array(pti);
+      const Array4<const Real>& velocity_array = velocity.const_array(pti);
+      
+      auto& particles = pti.GetArrayOfStructs();
+      
+      for (auto& p : particles) {
+         const IntVect p_indices { get_pos_indices(p.pos(0), p.pos(1), p.pos(2), dx, dom_min, AMReXConst::btype_c) };
+
+         Real vth
+            = math::square(p.rdata(pExtra_real_ind::vx_i) - velocity_array(p_indices[0],p_indices[1],p_indices[2],0))
+            + math::square(p.rdata(pExtra_real_ind::vy_i) - velocity_array(p_indices[0],p_indices[1],p_indices[2],1))
+            + math::square(p.rdata(pExtra_real_ind::vz_i) - velocity_array(p_indices[0],p_indices[1],p_indices[2],2));
+
+         vth *= p.rdata(pExtra_real_ind::weight_i)*pop.mass/PhysConst::k;
+         
+         temperature_array(p_indices[0],p_indices[1],p_indices[2]) += vth;
+      }
+   }
+            
 }
