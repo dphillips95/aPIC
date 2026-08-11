@@ -191,10 +191,13 @@ int main(int argc, char* argv[]) {
             inp_pop.query("density", tmp.density);
             inp_pop.query("macro", tmp.macro);
             
+            tmp.mass *= PhysConst::m_p;
+            tmp.charge *= PhysConst::q_e;
+            
             if (electron) {
                tmp.mass /= mass_ratio;
             }
-
+            
             tmp.vth = std::sqrt(PhysConst::k*tmp.temperature/tmp.mass);
             
             pop_list.push_back(tmp);
@@ -246,7 +249,7 @@ int main(int argc, char* argv[]) {
       };
 
       // Vector of particle containers
-      std::vector<myPContainer> pContainer_list;
+      std::vector<std::unique_ptr<myPContainer>> pContainer_list;
       pContainer_list.reserve(pop_count);
       
       // std::array<MultiFab,3> B_f = {
@@ -418,8 +421,8 @@ int main(int argc, char* argv[]) {
 
       // Particles initial condition; fill with uniform distribution
       for (size_t ii=0; ii<pop_count; ++ii) {
-         pContainer_list.emplace_back(geom, dm, ba_c);
-         uniform_injector(pContainer_list[ii], pop_list[ii]);
+         pContainer_list.push_back(std::make_unique<myPContainer>(geom, dm, ba_c));
+         uniform_injector(*pContainer_list[ii], pop_list[ii]);
       }
       
       // Boundary conditions
@@ -635,6 +638,9 @@ int main(int argc, char* argv[]) {
       //         << "B_fz: " << sym_test(*B_f[2],sym_dir) << std::endl;
       
       Real time = 0.0;
+
+      // Decenter particles (probably not strictly necessary)
+      particlePusher_all(pContainer_list, -dt/2);
       
       for (int step=0; step<steps; ++step) {
          Print()  << std::endl << "Step: " << step << std::endl;
@@ -642,6 +648,9 @@ int main(int argc, char* argv[]) {
          if (step % save_steps == 0) {
             saveState(step, time, EM_state, pContainer_list, pop_list, geom, datalog);
          }
+
+         // Advance particle positions
+         particlePusher_all(pContainer_list, dt);
 
          // gmres_step(EM_state, dx, dt, theta, rtol, atol, verbosity);
          gmres_step_matrix(EM_state, matA_B2E, matA_E2B, matA_E2E, dx, dt, theta, rtol, atol, verbosity);

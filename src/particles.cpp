@@ -90,6 +90,30 @@ void fill_particles_cell(myPTile& parts, const size_t count, const Real vth, con
    }
 }
 
+// Push all particle populations
+void particlePusher_all(std::vector<std::unique_ptr<myPContainer>>& pContainer_list, const Real dt) {
+   for (auto& pContainer : pContainer_list) {
+      particlePusher(*pContainer, dt);
+   }
+}
+
+// Push particles according to velocity
+void particlePusher(myPContainer& pContainer, const Real dt) {
+   constexpr int lev = 0;
+   
+   for (myPIter pti(pContainer, lev); pti.isValid(); ++pti) {
+      auto& particles = pti.GetArrayOfStructs();
+
+      for (auto& p : particles) {
+         p.pos(0) += dt*p.rdata(pExtra_real_ind::vx_i);
+         p.pos(1) += dt*p.rdata(pExtra_real_ind::vy_i);
+         p.pos(2) += dt*p.rdata(pExtra_real_ind::vz_i);
+      }
+   }
+   
+   pContainer.Redistribute();
+}
+
 // Accumulates number density, current and kinetic energy simultaneously
 // Note: Density and current should be set to zero beforehand
 // Also Note: This and accumulateTemperature assume that particle and multifab boxes line up
@@ -126,7 +150,7 @@ void accumulateDensityCurrentKE(MultiFab& density, MultiFab& current, MultiFab& 
 
 // Accumulates temperature. Note: should be set to zero beforehand
 void accumulateTemperature(MultiFab& temperature, const MultiFab& velocity, const myPContainer& pContainer, const Population& pop) {
-   int lev = 0;
+   constexpr int lev = 0;
 
    const GpuArray<Real,3>
       dom_min = pContainer.Geom(lev).ProbLoArray(),

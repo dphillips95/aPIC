@@ -71,6 +71,9 @@ void uniform_injector(myPContainer& pContainer, const Population& pop);
 
 void fill_particles_cell(myPTile& parts, const size_t count, const amrex::Real vth, const std::vector<amrex::Real> velocity, const amrex::Real weight, amrex::GpuArray<amrex::Real,3> r_min, amrex::GpuArray<amrex::Real,3> r_max);
 
+void particlePusher_all(std::vector<std::unique_ptr<myPContainer>>& pContainer_list, const amrex::Real dt);
+void particlePusher(myPContainer& pContainer, const amrex::Real dt);
+
 void accumulateDensityCurrentKE(amrex::MultiFab& density, amrex::MultiFab& current, amrex::MultiFab& KE_Energy, const myPContainer& pContainer, const Population& pop);
 void accumulateTemperature(amrex::MultiFab& temperature, const amrex::MultiFab& velocity, const myPContainer& pContainer, const Population& pop);
 

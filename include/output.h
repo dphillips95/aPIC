@@ -32,6 +32,6 @@ Author(s): David Phillips
 
 void initialise_datalog(std::ofstream& datalog);
 
-void saveState(int step, amrex::Real time, const BE& EM_state, const std::vector<myPContainer>& pContainer_list, const std::vector<Population>& pop_list, const amrex::Geometry& geom, std::ofstream& datalog);
+void saveState(int step, amrex::Real time, const BE& EM_state, const std::vector<std::unique_ptr<myPContainer>>& pContainer_list, const std::vector<Population>& pop_list, const amrex::Geometry& geom, std::ofstream& datalog);
 
 #endif

@@ -42,7 +42,7 @@ void initialise_datalog(std::ofstream& datalog) {
            << std::setw(Log::datWidth) << "Total_energy" << std::endl;
 }
    
-void saveState(int step, Real time, const BE& EM_state, const std::vector<myPContainer>& pContainer_list, const std::vector<Population>& pop_list, const Geometry& geom, std::ofstream& datalog) {
+void saveState(int step, Real time, const BE& EM_state, const std::vector<std::unique_ptr<myPContainer>>& pContainer_list, const std::vector<Population>& pop_list, const Geometry& geom, std::ofstream& datalog) {
    static int save_count = 0;
 
    const MultiFab* E_n = &EM_state.getE_n_const();
@@ -112,13 +112,13 @@ void saveState(int step, Real time, const BE& EM_state, const std::vector<myPCon
       Jp_c[pp].setVal(0.0);
       vp_c[pp].setVal(0.0);
       temp_c[pp].setVal(0.0);
-      accumulateDensityCurrentKE(rho_c[pp], Jp_c[pp], KEp_Energy_c[pp], pContainer_list[pp], pop_list[pp]);
+      accumulateDensityCurrentKE(rho_c[pp], Jp_c[pp], KEp_Energy_c[pp], *pContainer_list[pp], pop_list[pp]);
       MultiFab::Copy(vp_c[pp], Jp_c[pp], 0, 0, 3, nghost);
       vp_c[pp].mult(1/pop_list[pp].charge, nghost);
       for (int nn=0; nn<3; ++nn) {
          MultiFab::Divide(vp_c[pp], rho_c[pp], 0, nn, 1, nghost);
       }
-      accumulateTemperature(temp_c[pp], vp_c[pp], pContainer_list[pp], pop_list[pp]);
+      accumulateTemperature(temp_c[pp], vp_c[pp], *pContainer_list[pp], pop_list[pp]);
 
       rho_c[pp].FillBoundary(geom.periodicity());
       Jp_c[pp].FillBoundary(geom.periodicity());
