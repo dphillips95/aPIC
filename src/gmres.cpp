@@ -888,6 +888,66 @@ void get_curl_n2f_operator_sparse(sp_matrix<Real>& curl_x, sp_matrix<Real>& curl
    curl_z.add_chunk(dat_z, row_indices_z, col_indices_z);
 }
 
+void get_curl_operators_sparse_ba(std::array<LayoutData<sp_matrix<Real>>,3>& matA_f2n, std::array<LayoutData<sp_matrix<Real>>,3>& matA_n2f, const int nghost, const GpuArray<Real,3>& dx, const BoxArray& ba, const DistributionMapping& dm) {
+   for (MFIter mfi(ba,dm); mfi.isValid(); ++mfi) {
+      const Box&
+         bx_n = mfi.tilebox(AMReXConst::btype_n),
+         bx_fx = convert(bx_n,AMReXConst::btype_fx),
+         bx_fy = convert(bx_n,AMReXConst::btype_fy),
+         bx_fz = convert(bx_n,AMReXConst::btype_fz),
+         bx_n_ghost = grow(bx_n, nghost),
+         bx_fx_ghost = grow(bx_fx, nghost),
+         bx_fy_ghost = grow(bx_fy, nghost),
+         bx_fz_ghost = grow(bx_fz, nghost);
+      
+      const IntVect
+         len_n = bx_n.length(),
+         len_fx = bx_fx.length(),
+         len_fy = bx_fy.length(),
+         len_fz = bx_fz.length(),
+         len_n_ghost = bx_n_ghost.length(),
+         len_fx_ghost = bx_fx_ghost.length(),
+         len_fy_ghost = bx_fy_ghost.length(),
+         len_fz_ghost = bx_fz_ghost.length();
+   
+      const int
+         total_n = math::product(len_n),
+         total_fx = math::product(len_fx),
+         total_fy = math::product(len_fy),
+         total_fz = math::product(len_fz),
+         total_n_ghost = math::product(len_n_ghost),
+         total_fx_ghost = math::product(len_fx_ghost),
+         total_fy_ghost = math::product(len_fy_ghost),
+         total_fz_ghost = math::product(len_fz_ghost);
+      
+      constexpr int
+         cols_per_row_f2n = 4,
+         cols_per_row_n2f = 8;
+      
+      /*
+      // Non-sparse version
+      matA_f2n[0][mfi] = matrix<Real>(3*total_n, total_fx_ghost, 0.0);
+      matA_f2n[1][mfi] = matrix<Real>(3*total_n, total_fy_ghost, 0.0);
+      matA_f2n[2][mfi] = matrix<Real>(3*total_n, total_fz_ghost, 0.0);
+      
+      matA_n2f[0][mfi] = matrix<Real>(total_fx, 3*total_n_ghost, 0.0);
+      matA_n2f[1][mfi] = matrix<Real>(total_fy, 3*total_n_ghost, 0.0);
+      matA_n2f[2][mfi] = matrix<Real>(total_fz, 3*total_n_ghost, 0.0);
+      */
+      
+      matA_f2n[0][mfi] = sp_matrix<Real>(2*cols_per_row_f2n*total_n, 3*total_n, total_fx_ghost);
+      matA_f2n[1][mfi] = sp_matrix<Real>(2*cols_per_row_f2n*total_n, 3*total_n, total_fy_ghost);
+      matA_f2n[2][mfi] = sp_matrix<Real>(2*cols_per_row_f2n*total_n, 3*total_n, total_fz_ghost);
+      
+      matA_n2f[0][mfi] = sp_matrix<Real>(cols_per_row_n2f*total_fx, total_fx, 3*total_n_ghost);
+      matA_n2f[1][mfi] = sp_matrix<Real>(cols_per_row_n2f*total_fy, total_fy, 3*total_n_ghost);
+      matA_n2f[2][mfi] = sp_matrix<Real>(cols_per_row_n2f*total_fz, total_fz, 3*total_n_ghost);
+      
+      get_curl_f2n_operator_sparse(matA_f2n[0][mfi], matA_f2n[1][mfi], matA_f2n[2][mfi], bx_n, nghost, dx);
+      get_curl_n2f_operator_sparse(matA_n2f[0][mfi], matA_n2f[1][mfi], matA_n2f[2][mfi], bx_n, nghost, dx);
+   }
+}
+
 /*
 // Apply given matrix to E data in x to give B data in Ax (current)
 // Note: Data is summed not overwritten

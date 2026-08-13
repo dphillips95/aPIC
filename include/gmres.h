@@ -776,4 +776,7 @@ inline std::array<sp_matrix<amrex::Real>,3> get_curl_n2f_operator_sparse(const a
    return ret;
 }
 
+// Compute curl operators for entire BoxArray
+void get_curl_operators_sparse_ba(std::array<amrex::LayoutData<sp_matrix<amrex::Real>>,3>& matA_f2n, std::array<amrex::LayoutData<sp_matrix<amrex::Real>>,3>& matA_n2f, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm);
+
 #endif

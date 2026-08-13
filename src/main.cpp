@@ -455,8 +455,11 @@ int main(int argc, char* argv[]) {
       for (int nn=0; nn<3; ++nn) {
          B_f[nn]->OverrideSync(geom.periodicity());
       }
-
+      
       // Generate curl operators
+      get_curl_operators_sparse_ba(matA_B2E, matA_E2B, nghost, dx, E_n->boxArray(), dm);
+      
+      /*
       for (MFIter mfi(*E_n); mfi.isValid(); ++mfi) {
          const Box&
             bx_n = mfi.tilebox(AMReXConst::btype_n),
@@ -504,7 +507,6 @@ int main(int argc, char* argv[]) {
             cols_per_row_B2E = 4,
             cols_per_row_E2B = 8;
 
-         /*
          matA_B2E[0][mfi] = matrix<Real>(3*total_n_B2E, total_fx_B2E, 0.0);
          matA_B2E[1][mfi] = matrix<Real>(3*total_n_B2E, total_fy_B2E, 0.0);
          matA_B2E[2][mfi] = matrix<Real>(3*total_n_B2E, total_fz_B2E, 0.0);
@@ -512,7 +514,6 @@ int main(int argc, char* argv[]) {
          matA_E2B[0][mfi] = matrix<Real>(total_fx_E2B, 3*total_n_E2B, 0.0);
          matA_E2B[1][mfi] = matrix<Real>(total_fy_E2B, 3*total_n_E2B, 0.0);
          matA_E2B[2][mfi] = matrix<Real>(total_fz_E2B, 3*total_n_E2B, 0.0);
-         */
          
          matA_B2E[0][mfi] = sp_matrix<Real>(2*cols_per_row_B2E*total_n_B2E, 3*total_n_B2E, total_fx_B2E);
          matA_B2E[1][mfi] = sp_matrix<Real>(2*cols_per_row_B2E*total_n_B2E, 3*total_n_B2E, total_fy_B2E);
@@ -529,6 +530,9 @@ int main(int argc, char* argv[]) {
          matA_E2E[mfi] = sp_matrix<Real>(27*total_n_ghost, total_n_ghost, total_n);
          
       }
+      */
+
+      
       
       // const IntVect& sym_dir = AMReXConst::btype_ex;
       
