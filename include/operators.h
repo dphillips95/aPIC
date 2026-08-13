@@ -126,6 +126,10 @@ inline std::array<amrex::MultiFab,3> node2edge(const amrex::MultiFab& node_data,
    return edge_data;
 }
 
+amrex::Real node2r_scalar(const amrex::Array4<const amrex::Real>& node_array, const amrex::Real xpos, const amrex::Real ypos, const amrex::Real zpos, const amrex::IntVect& cell_indices, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min);
+std::array<amrex::Real,3> node2r_vector(const amrex::Array4<const amrex::Real>& node_array, const amrex::Real xpos, const amrex::Real ypos, const amrex::Real zpos, const amrex::IntVect& cell_indices, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min);
+std::array<amrex::Real,3> face2r(const amrex::Array4<const amrex::Real>& xface_array, const amrex::Array4<const amrex::Real>& yface_array, const amrex::Array4<const amrex::Real>& zface_array, const amrex::Real xpos, const amrex::Real ypos, const amrex::Real zpos, const amrex::IntVect& cell_indices, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min);
+
 // Diagnostics
 // Energy_c should be cell-centred with 3 components
 void compute_EM_energy(amrex::MultiFab& Energy_c, const amrex::MultiFab& B_c, const amrex::MultiFab& E_c);
@@ -309,7 +313,7 @@ inline amrex::IntVect get_cell_indices(int cellID, const amrex::IntVect& len, in
    return amrex::IntVect(x_index,y_index,z_index);
 }
 
-// Get (global) cell indices from true domain position
+// Get (global) cell/face/edge/node indices from true domain position
 inline amrex::IntVect get_pos_indices(amrex::Real xpos, amrex::Real ypos, amrex::Real zpos, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min, const amrex::IntVect& index_type = amrex::IntVect::TheZeroVector()) {
    amrex::IntVect ret = {
       int(floor((xpos - dom_min[0])/dx[0] + index_type[0]/2)),
@@ -317,6 +321,12 @@ inline amrex::IntVect get_pos_indices(amrex::Real xpos, amrex::Real ypos, amrex:
       int(floor((zpos - dom_min[2])/dx[2] + index_type[2]/2))
    };
    return ret;
+}
+
+// Particle weight of nearest lower neighbour at given location for node-type indexing
+inline std::array<amrex::Real,2> CIC_weights_1D(const amrex::Real x, const amrex::Real dx, const int x_ind, const amrex::Real xmin) {
+   amrex::Real w = (x - xmin)/dx - x_ind;
+   return {1-w, w};
 }
 
 // Check symmetry in given direction (i.e. check if constant along given direction(s)

@@ -33,6 +33,8 @@ Author(s): David Phillips
 #include <AMReX_GMRES.H>
 #include <AMReX_Print.H>
 
+#include <vector>
+
 using namespace amrex;
 
 // Advance B and E fields by solving gmres system

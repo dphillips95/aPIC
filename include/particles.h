@@ -25,8 +25,13 @@ Author(s): David Phillips, Ilja Honkonen
 #ifndef PARTICLES_H_
 #define PARTICLES_H_
 
+#include <math_functions.h>
+#include <matrix.h>
+
 #include <AMReX_REAL.H>
 #include <AMReX_Particles.H>
+
+#include <vector>
 
 struct Population {
    std::string name; // Population name
@@ -67,14 +72,54 @@ using myPLevel = myPContainer::ParticleLevel;
 using myAoS = myPContainer::AoS;
 using mySoA = myPContainer::SoA;
 
+inline matrix<amrex::Real> compute_alpha(const amrex::Real Bp_x, const amrex::Real Bp_y, const amrex::Real Bp_z) {
+   matrix<amrex::Real> ret(3,3);
+
+   ret(0,0) = Bp_x*Bp_x + 1;
+   ret(0,1) = Bp_x*Bp_y + Bp_z;
+   ret(0,2) = Bp_x*Bp_z - Bp_y;
+   ret(1,0) = Bp_y*Bp_x - Bp_z;
+   ret(1,1) = Bp_y*Bp_y + 1;
+   ret(1,2) = Bp_y*Bp_z + Bp_x;
+   ret(2,0) = Bp_z*Bp_x + Bp_y;
+   ret(2,1) = Bp_z*Bp_y - Bp_x;
+   ret(2,2) = Bp_z*Bp_z + 1;
+   
+   ret.scale(1/(1 + Bp_x*Bp_x + Bp_y*Bp_y + Bp_z*Bp_z));
+   
+   return ret;   
+}
+
+inline matrix<amrex::Real> compute_alpha(const std::array<amrex::Real,3>& B_p) {
+   return compute_alpha(B_p[0], B_p[1], B_p[2]);
+}
+
 void uniform_injector(myPContainer& pContainer, const Population& pop);
 
 void fill_particles_cell(myPTile& parts, const size_t count, const amrex::Real vth, const std::vector<amrex::Real> velocity, const amrex::Real weight, amrex::GpuArray<amrex::Real,3> r_min, amrex::GpuArray<amrex::Real,3> r_max);
 
-void particlePusher_all(std::vector<std::unique_ptr<myPContainer>>& pContainer_list, const amrex::Real dt);
 void particlePusher(myPContainer& pContainer, const amrex::Real dt);
 
+// Push all particle populations
+inline void particlePusher_all(std::vector<std::unique_ptr<myPContainer>>& pContainer_list, const amrex::Real dt) {
+   for (auto& pContainer : pContainer_list) {
+      particlePusher(*pContainer, dt);
+   }
+}
+
+void compute_jHat(amrex::MultiFab& jHat, const amrex::Real beta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const myPContainer& pContainer);
+
+// Add contributions to jHat from all populations
+inline void compute_jHat_all(amrex::MultiFab& jHat, const amrex::Real dt_theta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const std::vector<std::unique_ptr<myPContainer>>& pContainer_list, const std::vector<Population>& pop_list, const amrex::GpuArray<amrex::Real,3>& dx) {
+   for (size_t nn=0; nn<pContainer_list.size(); ++nn) {
+      amrex::Real beta = dt_theta*pop_list[nn].charge/pop_list[nn].mass;
+      compute_jHat(jHat, beta, B_fx, B_fy, B_fz, *pContainer_list[nn]);
+   }
+   
+   jHat.mult(1/math::product(dx));
+}
+
 void accumulateDensityCurrentKE(amrex::MultiFab& density, amrex::MultiFab& current, amrex::MultiFab& KE_Energy, const myPContainer& pContainer, const Population& pop);
-void accumulateTemperature(amrex::MultiFab& temperature, const amrex::MultiFab& velocity, const myPContainer& pContainer, const Population& pop);
+void accumulateTemperature(amrex::MultiFab& temperature, const amrex::MultiFab& velocity, const amrex::MultiFab& density, const myPContainer& pContainer, const Population& pop);
 
 #endif

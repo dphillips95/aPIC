@@ -27,6 +27,8 @@ Author(s): David Phillips
 
 #include <AMReX_REAL.H>
 
+#include <vector>
+
 #ifndef OUTPUT_H_
 #define OUTPUT_H_
 

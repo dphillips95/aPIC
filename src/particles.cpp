@@ -22,6 +22,7 @@ License along with this program. If not, see
 Author(s): David Phillips, Ilja Honkonen
 */
 
+#include <matrix.h>
 #include <operators.h>
 #include <particles.h>
 #include <math_functions.h>
@@ -74,7 +75,7 @@ void uniform_injector(myPContainer& pContainer, const Population& pop) {
    pContainer.Redistribute();
 }
 
-// Add count particles with given parameters within range
+// Add n = count particles with given parameters within range
 void fill_particles_cell(myPTile& parts, const size_t count, const Real vth, const std::vector<Real> velocity, const Real weight, GpuArray<Real,3> r_min, GpuArray<Real,3> r_max) {
    for (size_t ii=0; ii<count; ++ii) {
       myPType particle;
@@ -87,13 +88,6 @@ void fill_particles_cell(myPTile& parts, const size_t count, const Real vth, con
       particle.rdata(pExtra_real_ind::weight_i) = weight;
 
       parts.push_back(particle);
-   }
-}
-
-// Push all particle populations
-void particlePusher_all(std::vector<std::unique_ptr<myPContainer>>& pContainer_list, const Real dt) {
-   for (auto& pContainer : pContainer_list) {
-      particlePusher(*pContainer, dt);
    }
 }
 
@@ -114,6 +108,57 @@ void particlePusher(myPContainer& pContainer, const Real dt) {
    pContainer.Redistribute();
 }
 
+// Computes the rotated current jHat for a single population
+void compute_jHat(MultiFab& jHat, const Real beta, const MultiFab& B_fx, const MultiFab& B_fy, const MultiFab& B_fz, const myPContainer& pContainer) {
+   constexpr int lev = 0;
+
+   const GpuArray<Real,3>&
+      dom_min = pContainer.Geom(lev).ProbLoArray(),
+      dx = pContainer.Geom(lev).CellSizeArray();
+   
+   for (myPIterConst pti(pContainer, lev); pti.isValid(); ++pti) {
+      const auto& particles = pti.GetArrayOfStructs();
+      
+      const Array4<Real>& jHat_array = jHat.array(pti);
+      const Array4<const Real>& B_fx_array = B_fx.const_array(pti);
+      const Array4<const Real>& B_fy_array = B_fy.const_array(pti);
+      const Array4<const Real>& B_fz_array = B_fz.const_array(pti);
+
+      for (auto& p : particles) {
+         const IntVect cell_indices = get_pos_indices(p.pos(0), p.pos(1), p.pos(2), dx, dom_min);
+
+         const std::array<Real,2>
+            x_weight = CIC_weights_1D(p.pos(0), dx[0], cell_indices[0], dom_min[0]),
+            y_weight = CIC_weights_1D(p.pos(1), dx[1], cell_indices[1], dom_min[1]),
+            z_weight = CIC_weights_1D(p.pos(2), dx[2], cell_indices[2], dom_min[2]);
+         
+         std::array<Real,3> B_p = face2r(B_fx_array, B_fy_array, B_fz_array, p.pos(0), p.pos(1), p.pos(2), cell_indices, dx, dom_min);
+         for (auto& val : B_p) {
+            // Rescale magnetic field by beta = dt*theta*q_p/m_p
+            val *= beta;
+         }
+
+         const matrix<Real> alpha = compute_alpha(B_p);
+
+         const std::array<Real,3> alpha_n = {
+            alpha(0,0)*p.rdata(pExtra_real_ind::vx_i) + alpha(0,1)*p.rdata(pExtra_real_ind::vy_i) + alpha(0,2)*p.rdata(pExtra_real_ind::vz_i),
+            alpha(1,0)*p.rdata(pExtra_real_ind::vx_i) + alpha(1,1)*p.rdata(pExtra_real_ind::vy_i) + alpha(1,2)*p.rdata(pExtra_real_ind::vz_i),
+            alpha(2,0)*p.rdata(pExtra_real_ind::vx_i) + alpha(2,1)*p.rdata(pExtra_real_ind::vy_i) + alpha(2,2)*p.rdata(pExtra_real_ind::vz_i)
+         };
+
+         for (int ii=0; ii<2; ++ii) {
+            for (int jj=0; jj<2; ++jj) {
+               for (int kk=0; kk<2; ++kk) {
+                  for (int nn=0; nn<3; ++nn) {
+                     jHat_array(cell_indices[0]+ii, cell_indices[1]+jj, cell_indices[2]+kk, nn) += p.rdata(pExtra_real_ind::weight_i)*x_weight[ii]*y_weight[jj]*z_weight[kk]*alpha_n[nn];
+                  }
+               }
+            }
+         }
+      }
+   }
+}
+
 // Accumulates number density, current and kinetic energy simultaneously
 // Note: Density and current should be set to zero beforehand
 // Also Note: This and accumulateTemperature assume that particle and multifab boxes line up
@@ -121,7 +166,7 @@ void accumulateDensityCurrentKE(MultiFab& density, MultiFab& current, MultiFab& 
    // AMR level, currently no amr so = 0
    constexpr int lev = 0;
 
-   const GpuArray<Real,3>
+   const GpuArray<Real,3>&
       dom_min = pContainer.Geom(lev).ProbLoArray(),
       dx = pContainer.Geom(lev).CellSizeArray();
    
@@ -142,14 +187,12 @@ void accumulateDensityCurrentKE(MultiFab& density, MultiFab& current, MultiFab& 
          current_array(p_indices[0],p_indices[1],p_indices[2],2) += p.rdata(pExtra_real_ind::vz_i)*p.rdata(pExtra_real_ind::weight_i)*pop.charge;
 
          KE_Energy_array(p_indices[0],p_indices[1],p_indices[2]) += pop.mass*p.rdata(pExtra_real_ind::weight_i)*(math::square(p.rdata(pExtra_real_ind::vx_i)) + math::square(p.rdata(pExtra_real_ind::vy_i)) + math::square(p.rdata(pExtra_real_ind::vz_i)));
-
-         // Print() << density_array(p_indices[0],p_indices[1],p_indices[2]) << std::endl;
       }
    }
 }
 
 // Accumulates temperature. Note: should be set to zero beforehand
-void accumulateTemperature(MultiFab& temperature, const MultiFab& velocity, const myPContainer& pContainer, const Population& pop) {
+void accumulateTemperature(MultiFab& temperature, const MultiFab& velocity, const MultiFab& density, const myPContainer& pContainer, const Population& pop) {
    constexpr int lev = 0;
 
    const GpuArray<Real,3>
@@ -165,15 +208,22 @@ void accumulateTemperature(MultiFab& temperature, const MultiFab& velocity, cons
       for (auto& p : particles) {
          const IntVect p_indices { get_pos_indices(p.pos(0), p.pos(1), p.pos(2), dx, dom_min, AMReXConst::btype_c) };
 
-         Real vth
-            = math::square(p.rdata(pExtra_real_ind::vx_i) - velocity_array(p_indices[0],p_indices[1],p_indices[2],0))
-            + math::square(p.rdata(pExtra_real_ind::vy_i) - velocity_array(p_indices[0],p_indices[1],p_indices[2],1))
-            + math::square(p.rdata(pExtra_real_ind::vz_i) - velocity_array(p_indices[0],p_indices[1],p_indices[2],2));
-
-         vth *= p.rdata(pExtra_real_ind::weight_i)*pop.mass/PhysConst::k;
+         Real v2 = math::square(p.rdata(pExtra_real_ind::vx_i) - velocity_array(p_indices[0],p_indices[1],p_indices[2],0));
+         v2 += math::square(p.rdata(pExtra_real_ind::vy_i) - velocity_array(p_indices[0],p_indices[1],p_indices[2],1));
+         v2 += math::square(p.rdata(pExtra_real_ind::vz_i) - velocity_array(p_indices[0],p_indices[1],p_indices[2],2));
          
-         temperature_array(p_indices[0],p_indices[1],p_indices[2]) += vth;
+         temperature_array(p_indices[0],p_indices[1],p_indices[2]) += v2*p.rdata(pExtra_real_ind::weight_i);
       }
+
+      const Array4<const Real>& density_array = density.const_array(pti);
+      
+      const Box& bx_c = pti.tilebox(AMReXConst::btype_c);
+      
+      // Temperature_array now holds total square velocity,
+      // so divide by particle count = number density*cell volume to get mean square
+      // Could do this within particle loop above, this way cuts down on * and / operations
+      ParallelFor(bx_c, [&](int ii, int jj, int kk) {
+         temperature_array(ii,jj,kk) *= pop.mass/(3*PhysConst::k*density_array(ii,jj,kk)*math::product(dx));
+      });
    }
-            
 }

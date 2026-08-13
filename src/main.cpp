@@ -36,6 +36,8 @@ Author(s): David Phillips
 
 #include <AMReX_Print.H>
 
+#include <vector>
+
 using namespace amrex;
 
 int main(int argc, char* argv[]) {
@@ -77,7 +79,6 @@ int main(int argc, char* argv[]) {
       int verbosity = 0;
       
       std::vector<Population> pop_list;
-      size_t pop_count;
       
       {
          // Get inputs with ParmParse
@@ -180,7 +181,8 @@ int main(int argc, char* argv[]) {
 
             tmp.name = pop;
             
-            bool electron;
+            // Particle default type is false
+            bool electron = false;
             
             inp_pop.query("electron", electron);
             
@@ -202,8 +204,9 @@ int main(int argc, char* argv[]) {
             
             pop_list.push_back(tmp);
          }
-         pop_count = pop_list.size();
       }
+
+      const size_t pop_count = pop_list.size();
 
       // Add process rank to seed to ensure each process has a different seed
       InitRandom(seed + myRank, nprocs, 0);
@@ -262,20 +265,14 @@ int main(int argc, char* argv[]) {
          curl_B_n(ba_n, dm, 3, 0),
          curl_E_fx(ba_fx, dm, 3, 0),
          curl_E_fy(ba_fy, dm, 3, 0),
-         curl_E_fz(ba_fz, dm, 3, 0);
-         // curl_B_n_sp(ba_n, dm, 3, 0),
-         // curl_E_fx_sp(ba_fx, dm, 3, 0),
-         // curl_E_fy_sp(ba_fy, dm, 3, 0),
-         // curl_E_fz_sp(ba_fz, dm, 3, 0);
+         curl_E_fz(ba_fz, dm, 3, 0),
+         jHat(ba_n, dm, 3, 0);
       
       curl_B_n.setVal(0.0);
       curl_E_fx.setVal(0.0);
       curl_E_fy.setVal(0.0);
       curl_E_fz.setVal(0.0);
-      // curl_B_n_sp.setVal(0.0);
-      // curl_E_fx_sp.setVal(0.0);
-      // curl_E_fy_sp.setVal(0.0);
-      // curl_E_fz_sp.setVal(0.0);
+      jHat.setVal(0.0);
       
       std::array<MultiFab,3> Jp_f = {
          MultiFab(ba_fx, dm, 1, nghost),
@@ -531,103 +528,6 @@ int main(int argc, char* argv[]) {
          // matA_E2E[mfi] = matrix<Real>(total_n_ghost, total_n, 0.0);
          matA_E2E[mfi] = sp_matrix<Real>(27*total_n_ghost, total_n_ghost, total_n);
          
-         /*
-         auto matA_Bx2E_mf = matA_B2E[0][mfi];
-         auto matA_By2E_mf = matA_B2E[1][mfi];
-         auto matA_Bz2E_mf = matA_B2E[2][mfi];
-         auto matA_E2Bx_mf = matA_E2B[0][mfi];
-         auto matA_E2By_mf = matA_E2B[1][mfi];
-         auto matA_E2Bz_mf = matA_E2B[2][mfi];
-         auto matA_Bx2E_sp_mf = matA_B2E_sp[0][mfi];
-         auto matA_By2E_sp_mf = matA_B2E_sp[1][mfi];
-         auto matA_Bz2E_sp_mf = matA_B2E_sp[2][mfi];
-         auto matA_E2Bx_sp_mf = matA_E2B_sp[0][mfi];
-         auto matA_E2By_sp_mf = matA_E2B_sp[1][mfi];
-         auto matA_E2Bz_sp_mf = matA_E2B_sp[2][mfi];
-         
-         const FArrayBox& En_data { (*E_n)[mfi] };
-         const FArrayBox& Bfx_data { (*B_f[0])[mfi] };
-         const FArrayBox& Bfy_data { (*B_f[1])[mfi] };
-         const FArrayBox& Bfz_data { (*B_f[2])[mfi] };
-
-         amrex::FArrayBox& curl_Bn_data { curl_B_n[mfi] };
-         amrex::FArrayBox& curl_Efx_data { curl_E_fx[mfi] };
-         amrex::FArrayBox& curl_Efy_data { curl_E_fy[mfi] };
-         amrex::FArrayBox& curl_Efz_data { curl_E_fz[mfi] };
-         amrex::FArrayBox& curl_Bn_sp_data { curl_B_n_sp[mfi] };
-         amrex::FArrayBox& curl_Efx_sp_data { curl_E_fx_sp[mfi] };
-         amrex::FArrayBox& curl_Efy_sp_data { curl_E_fy_sp[mfi] };
-         amrex::FArrayBox& curl_Efz_sp_data { curl_E_fz_sp[mfi] };
-
-         const amrex::IntVect
-            len_En = En_data.length(),
-            len_Bfx = Bfx_data.length(),
-            len_Bfy = Bfy_data.length(),
-            len_Bfz = Bfz_data.length(),
-            len_cBn = curl_Bn_data.length(),
-            len_cEfx = curl_Efx_data.length(),
-            len_cEfy = curl_Efy_data.length(),
-            len_cEfz = curl_Efz_data.length(),
-            len_cBn_sp = curl_Bn_data.length(),
-            len_cEfx_sp = curl_Efx_sp_data.length(),
-            len_cEfy_sp = curl_Efy_sp_data.length(),
-            len_cEfz_sp = curl_Efz_sp_data.length();
-            
-         const size_t
-            total_En = math::product(len_En),
-            total_Bfx = math::product(len_Bfx),
-            total_Bfy = math::product(len_Bfy),
-            total_Bfz = math::product(len_Bfz),
-            total_cBn = math::product(len_cBn),
-            total_cEfx = math::product(len_cEfx),
-            total_cEfy = math::product(len_cEfy),
-            total_cEfz = math::product(len_cEfz),
-            total_cBn_sp = math::product(len_cBn_sp),
-            total_cEfx_sp = math::product(len_cEfx_sp),
-            total_cEfy_sp = math::product(len_cEfy_sp),
-            total_cEfz_sp = math::product(len_cEfz_sp);
-
-         const std::span<const Real>
-            En_span(En_data.dataPtr(0), 3*total_En),
-            Bfx_span(Bfx_data.dataPtr(0), total_Bfx),
-            Bfy_span(Bfy_data.dataPtr(0), total_Bfy),
-            Bfz_span(Bfz_data.dataPtr(0), total_Bfz),
-            Enx_span(&(En_span[0]), total_En),
-            Eny_span(&(En_span[total_En]), total_En),
-            Enz_span(&(En_span[2*total_En]), total_En);
-         
-         std::span<Real>
-            cBn_span(curl_Bn_data.dataPtr(0), 3*total_cBn),
-            cEfx_span(curl_Efx_data.dataPtr(0), total_cEfx),
-            cEfy_span(curl_Efy_data.dataPtr(0), total_cEfy),
-            cEfz_span(curl_Efz_data.dataPtr(0), total_cEfz),
-            cBn_sp_span(curl_Bn_sp_data.dataPtr(0), 3*total_cBn_sp),
-            cEfx_sp_span(curl_Efx_sp_data.dataPtr(0), total_cEfx_sp),
-            cEfy_sp_span(curl_Efy_sp_data.dataPtr(0), total_cEfy_sp),
-            cEfz_sp_span(curl_Efz_sp_data.dataPtr(0), total_cEfz_sp),
-            cBnx_span(&(cBn_span[0]), total_cBn),
-            cBny_span(&(cBn_span[total_cBn]), total_cBn),
-            cBnz_span(&(cBn_span[2*total_cBn]), total_cBn),
-            cBnx_sp_span(&(cBn_sp_span[0]), total_cBn),
-            cBny_sp_span(&(cBn_sp_span[total_cBn]), total_cBn),
-            cBnz_sp_span(&(cBn_sp_span[2*total_cBn]), total_cBn);
-         
-         matA_Bx2E_mf.mmult_add(cBn_span, Bfx_span, 1);
-         matA_By2E_mf.mmult_add(cBn_span, Bfy_span, 1);
-         matA_Bz2E_mf.mmult_add(cBn_span, Bfz_span, 1);
-         matA_E2Bx_mf.mmult_add(cEfx_span, En_span, 1);
-         matA_E2By_mf.mmult_add(cEfy_span, En_span, 1);
-         matA_E2Bz_mf.mmult_add(cEfz_span, En_span, 1);
-         
-         matA_Bx2E_sp_mf.mmult_add(cBn_sp_span, Bfx_span, 1);
-         matA_By2E_sp_mf.mmult_add(cBn_sp_span, Bfy_span, 1);
-         matA_Bz2E_sp_mf.mmult_add(cBn_sp_span, Bfz_span, 1);
-         matA_E2Bx_sp_mf.mmult_add(cEfx_sp_span, En_span, 1);
-         matA_E2By_sp_mf.mmult_add(cEfy_sp_span, En_span, 1);
-         matA_E2Bz_sp_mf.mmult_add(cEfz_sp_span, En_span, 1);
-         
-         Print() << "Done!" << std::endl;
-         */
       }
       
       // const IntVect& sym_dir = AMReXConst::btype_ex;
@@ -652,7 +552,11 @@ int main(int argc, char* argv[]) {
          // Advance particle positions
          particlePusher_all(pContainer_list, dt);
 
+         jHat.setVal(0.0);
+         compute_jHat_all(jHat, dt*theta, *B_f[0], *B_f[1], *B_f[2], pContainer_list, pop_list, dx);
+         
          // gmres_step(EM_state, dx, dt, theta, rtol, atol, verbosity);
+         
          gmres_step_matrix(EM_state, matA_B2E, matA_E2B, matA_E2E, dx, dt, theta, rtol, atol, verbosity);
          
          // Print() << "E_n: " << sym_test(*E_n,sym_dir) << std::endl

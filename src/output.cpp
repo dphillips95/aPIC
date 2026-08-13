@@ -31,6 +31,8 @@ Author(s): David Phillips
 #include <AMReX_MultiFab.H>
 #include <AMReX_PlotFileUtil.H>
 
+#include <vector>
+
 using namespace amrex;
 
 void initialise_datalog(std::ofstream& datalog) {
@@ -118,7 +120,7 @@ void saveState(int step, Real time, const BE& EM_state, const std::vector<std::u
       for (int nn=0; nn<3; ++nn) {
          MultiFab::Divide(vp_c[pp], rho_c[pp], 0, nn, 1, nghost);
       }
-      accumulateTemperature(temp_c[pp], vp_c[pp], *pContainer_list[pp], pop_list[pp]);
+      accumulateTemperature(temp_c[pp], vp_c[pp], rho_c[pp], *pContainer_list[pp], pop_list[pp]);
 
       rho_c[pp].FillBoundary(geom.periodicity());
       Jp_c[pp].FillBoundary(geom.periodicity());

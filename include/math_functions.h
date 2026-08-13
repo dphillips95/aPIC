@@ -25,8 +25,12 @@ Author(s): David Phillips, Ilja Honkonen
 #ifndef MATH_FUNCTIONS_H_
 #define MATH_FUNCTIONS_H_
 
+#include <AMReX_MultiFab.H>
+#include <AMReX_Print.H>
+
 #include <cmath>
 #include <numeric>
+#include <span>
 
 namespace math {
    inline auto square(){ return 0; }
@@ -75,6 +79,21 @@ namespace math {
       T ret{1};
       for (const auto& y: x) ret *= y;
       return ret;
+   }
+}
+
+inline void view_MultiFab(const amrex::MultiFab& mf) {
+   for (amrex::MFIter mfi(mf); mfi.isValid(); ++mfi) {
+      const amrex::FArrayBox& mf_data { mf[mfi] };
+      
+      const amrex::IntVect len_mf = mf_data.length();
+      
+      const int total_mf = math::product(len_mf);
+      
+      const std::span<const amrex::Real>
+         mf_span(mf_data.dataPtr(0), total_mf*mf.nComp());
+      
+      amrex::Print() << mf_span[0] << std::endl;
    }
 }
 

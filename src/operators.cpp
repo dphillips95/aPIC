@@ -31,6 +31,8 @@ Author(s): David Phillips
 
 #include <AMReX_Print.H>
 
+#include <vector>
+
 using namespace amrex;
 
 // Interpolators: Node to Cell - Value in cell centre is calculated as average of value at all 8 nodes
@@ -99,6 +101,75 @@ void node2edge(MultiFab& xedge_data, MultiFab& yedge_data, MultiFab& zedge_data,
          e_array_z(ii,jj,kk) += (n_array(ii,  jj,  kk,  2) + n_array(ii,  jj,  kk+1,2))/2;
       });
    }
+}
+
+// Interpolate scalar node data to position r; input is Array4 not MultiFab
+// so position must be inside box real bounds
+Real node2r_scalar(const Array4<const Real>& node_array, const Real xpos, const Real ypos, const Real zpos, const IntVect& cell_indices, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min) {
+   // Cell indices (i,j,k) containing given position
+   // Surrounding nodes are at x = i, i+1; y = j, j+1; z = k, k+1
+   
+   std::array<Real,2>
+      x_weight = CIC_weights_1D(xpos, dx[0], cell_indices[0], dom_min[0]),
+      y_weight = CIC_weights_1D(ypos, dx[1], cell_indices[1], dom_min[1]),
+      z_weight = CIC_weights_1D(zpos, dx[2], cell_indices[2], dom_min[2]);
+
+   Real ret = 0;
+   for (int ii=0; ii<2; ++ii) {
+      for (int jj=0; jj<2; ++jj) {
+         for (int kk=0; kk<2; ++kk) {
+            ret += node_array(cell_indices[0]+ii, cell_indices[1]+jj, cell_indices[2]+kk)*x_weight[ii]*y_weight[jj]*z_weight[kk];
+         }
+      }
+   }
+
+   return ret;
+}
+
+// Interpolate vector node data to position r; input is Array4 not MultiFab
+// so position must be inside box real bounds
+std::array<Real,3> node2r_vector(const Array4<const Real>& node_array, const Real xpos, const Real ypos, const Real zpos, const IntVect& cell_indices, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min) {
+   // Cell indices (i,j,k) containing given position
+   // Surrounding nodes are at x = i, i+1; y = j, j+1; z = k, k+1
+   
+   std::array<Real,2>
+      x_weight = CIC_weights_1D(xpos, dx[0], cell_indices[0], dom_min[0]),
+      y_weight = CIC_weights_1D(ypos, dx[1], cell_indices[1], dom_min[1]),
+      z_weight = CIC_weights_1D(zpos, dx[2], cell_indices[2], dom_min[2]);
+
+   std::array<Real,3> ret = {0,0,0};
+   for (int ii=0; ii<2; ++ii) {
+      for (int jj=0; jj<2; ++jj) {
+         for (int kk=0; kk<2; ++kk) {
+            for (int nn=0; nn<3; ++nn) {
+               ret[nn] += node_array(cell_indices[0]+ii, cell_indices[1]+jj, cell_indices[2]+kk, nn)*x_weight[ii]*y_weight[jj]*z_weight[kk];
+            }
+         }
+      }
+   }
+   
+   return ret;
+}
+
+// Interpolate vector face data to position r; input is Array4 not MultiFab
+// so position must be inside box real bounds
+std::array<Real,3> face2r(const Array4<const Real>& xface_array, const Array4<const Real>& yface_array, const Array4<const Real>& zface_array, const Real xpos, const Real ypos, const Real zpos, const IntVect& cell_indices, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min) {
+   // Cell indices (i,j,k) containing given position
+   // Surrounding faces are at x = i, i+1; y = j, j+1; z = k, k+1
+   
+   const std::array<Real,2>
+      x_weight = CIC_weights_1D(xpos, dx[0], cell_indices[0], dom_min[0]),
+      y_weight = CIC_weights_1D(ypos, dx[1], cell_indices[1], dom_min[1]),
+      z_weight = CIC_weights_1D(zpos, dx[2], cell_indices[2], dom_min[2]);
+
+   std::array<Real,3> ret = {0,0,0};
+   for (int nn=0; nn<2; ++nn) {
+      ret[0] += xface_array(cell_indices[0]+nn, cell_indices[1], cell_indices[2])*x_weight[nn];
+      ret[0] += yface_array(cell_indices[0], cell_indices[1]+nn, cell_indices[2])*y_weight[nn];
+      ret[0] += zface_array(cell_indices[0], cell_indices[1], cell_indices[2]+nn)*z_weight[nn];
+   }
+   
+   return ret;
 }
 
 // Diagnostics: Compute cell Magnetic and Electric energy - Output is MultiFab with three components - B energy, E energy, Total energy

@@ -25,8 +25,10 @@ Author(s): David Phillips
 #ifndef MATRIX_H_
 #define MATRIX_H_
 
+#include <vector>
 #include <numeric>
 #include <span>
+#include <assert.h>
 
 // Non-sparse Matrix class; dimensions are defined at run time but are fixed
 template <typename T>
@@ -129,7 +131,7 @@ public:
 
    void mmult(std::span<T> ret, const std::span<const T> x) const { mmult(ret, *this, x); }
 
-   static void mmult_add(std::span<T> ret, const matrix<T>& A, const std::span<const T> x, amrex::Real a) {
+   static void mmult_add(std::span<T> ret, const matrix<T>& A, const std::span<const T> x, T a) {
 #ifdef AMREX_DEBUG
       assert(A.m_ncols == x.size());
       assert(A.m_nrows == ret.size());
@@ -141,7 +143,7 @@ public:
       }
    }
    
-   void mmult_add(std::span<T> ret, const std::span<const T> x, amrex::Real a) const { mmult_add(ret, *this, x, a); }
+   void mmult_add(std::span<T> ret, const std::span<const T> x, T a) const { mmult_add(ret, *this, x, a); }
    
    static matrix<T> identity(size_t n) {
       T tmp = 0;
@@ -150,6 +152,13 @@ public:
          ret(ii,ii) = 1;
       }
       return ret;
+   }
+
+   // Scale entire matrix by given factor
+   void scale(const T fact) {
+      for (size_t ii=0; ii<m_nrows*m_ncols; ++ii) {
+         m_dat[ii] *= fact;
+      }
    }
 };
 
@@ -268,7 +277,7 @@ public:
 
    void mmult(std::span<T> ret, const std::span<const T> x) const { mmult(ret, *this, x); }
 
-   static void mmult_add(std::span<T> ret, const sp_matrix<T>& A, const std::span<const T> x, amrex::Real a) {
+   static void mmult_add(std::span<T> ret, const sp_matrix<T>& A, const std::span<const T> x, T a) {
 #ifdef AMREX_DEBUG
       assert(A.m_ncols == x.size());
       assert(A.m_nrows == ret.size());
@@ -282,7 +291,7 @@ public:
       }
    }
    
-   void mmult_add(std::span<T> ret, const std::span<const T> x, amrex::Real a) const { mmult_add(ret, *this, x, a); }
+   void mmult_add(std::span<T> ret, const std::span<const T> x, T a) const { mmult_add(ret, *this, x, a); }
 };
 
 #endif
