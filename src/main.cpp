@@ -285,19 +285,25 @@ int main(int argc, char* argv[]) {
          MultiFab(ba_fy, dm, 1, nghost),
          MultiFab(ba_fz, dm, 1, nghost)
       };
-      
+
       // Distributed matrices for curl operators
+#if USE_CURLB_MATRIX
       std::array<LayoutData<sp_matrix<Real>>,3> matA_B2E = {
          LayoutData<sp_matrix<Real>>(ba_c,dm),
          LayoutData<sp_matrix<Real>>(ba_c,dm),
          LayoutData<sp_matrix<Real>>(ba_c,dm)
       };
+#endif
+#if USE_CURLE_MATRIX
       std::array<LayoutData<sp_matrix<Real>>,3> matA_E2B = {
          LayoutData<sp_matrix<Real>>(ba_c,dm),
          LayoutData<sp_matrix<Real>>(ba_c,dm),
          LayoutData<sp_matrix<Real>>(ba_c,dm)
       };
-      LayoutData<matrix<Real>> matA_E2E(ba_c,dm);
+#endif
+#if USE_CURRENT_MATRIX
+      LayoutData<matrix<Real>> matA_E2E = LayoutData<sp_matrix<Real>>(ba_c,dm);
+#endif
       
       E_n->setVal(0.0);
       for (int nn=0; nn<3; ++nn) {
@@ -463,10 +469,17 @@ int main(int argc, char* argv[]) {
       }
       
       // Generate curl operators
-      // get_curl_operators_ba(matA_B2E, matA_E2B, nghost, dx, E_n->boxArray(), dm);
+#if USE_CURLB_MATRIX
+      get_curl_f2n_operator_ba(matA_B2E, nghost, dx, E_n->boxArray(), dm);
+#endif
+#if USE_CURLE_MATRIX
+      get_curl_n2f_operator_ba(matA_E2B, nghost, dx, E_n->boxArray(), dm);
+#endif
 
+#if USE_CURRENT_MATRIX
       // Generate empty mass matrices
-      // constructEmptyMassMatrices_ba(matA_E2E, nghost, E_n->boxArray(), dm);
+      constructEmptyMassMatrices_ba(matA_E2E, nghost, E_n->boxArray(), dm);
+#endif
       
       // const IntVect& sym_dir = AMReXConst::btype_ex;
       
@@ -494,16 +507,26 @@ int main(int argc, char* argv[]) {
          jHat.setVal(0.0);
          // compute_jHat_all(jHat, dt, theta, *B_f[0], *B_f[1], *B_f[2], pContainer_list, pop_list, dV_inv);
          compute_jHat_pr_all(jHat, dt, theta, *B_f[0], *B_f[1], *B_f[2], *E_n, pContainer_list, pop_list, dV_inv);
-         
+
+#if USE_CURRENT_MATRIX
          // Compute mass matrices
-         // for (MFIter mfi(matA_E2E); mfi.isValid(); ++mfi) {
-         //    matA_E2E[mfi].setVal(0.0);
-         // }
-         // fillMassMatrices_all(matA_E2E, nghost, dt, *B_f[0], *B_f[1], *B_f[2], pContainer_list, pop_list, dV_inv);
+         for (MFIter mfi(matA_E2E); mfi.isValid(); ++mfi) {
+            matA_E2E[mfi].setVal(0.0);
+         }
+         fillMassMatrices_all(matA_E2E, nghost, dt, *B_f[0], *B_f[1], *B_f[2], pContainer_list, pop_list, dV_inv);
+#endif
          
-         gmres_step(EM_state, jHat, pContainer_list, pop_list, dV_inv, dx, dt, theta, rtol, atol, verbosity, max_gmres);
-         
-         // gmres_step(EM_state, matA_B2E, matA_E2B, matA_E2E, dx, dt, theta, rtol, atol, verbosity, max_gmres);
+         gmres_step(EM_state, jHat, pop_list, pContainer_list,
+#if USE_CURLB_MATRIX
+                    matA_B2E,
+#endif
+#if USE_CURLE_MATRIX
+                    matA_E2B,
+#endif
+#if USE_CURRENT_MATRIX
+                    matA_E2E,
+#endif
+                    dx, dt, theta, rtol, atol, verbosity, max_gmres);
          
          // Print() << "E_n: " << sym_test(*E_n,sym_dir) << std::endl
          //         << "B_fx: " << sym_test(*B_f[0],sym_dir) << std::endl

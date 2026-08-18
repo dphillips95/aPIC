@@ -373,19 +373,74 @@ public:
 // Generic GMRES linear operator class; all methods are implemented except for apply(), constructor can be overriden
 // The "vector" is a class BE consisting of MultiFabs of B and E, and ahandful of class methods for norms etc.
 // They cannot be combined into a single MultiFab as they do not share the same grid
+#if USE_CURLB_MATRIX || USE_CURLE_MATRIX || USE_CURRENT_MATRIX
+template <
+#if USE_CURLB_MATRIX
+   typename T,
+#endif
+#if USE_CURLE_MATRIX
+   typename U,
+#endif
+#if USE_CURRENT_MATRIX
+   typename V
+#endif
+   >
+#endif
 class linop {
-protected:
+private:
    // BoxArray here has no ghost cells
    amrex::BoxArray m_ba;
    amrex::DistributionMapping m_dm;
    int m_nghost;
    amrex::GpuArray<amrex::Real,3> m_dx;
-   amrex::Real m_tFactor; // time step factor, dt*theta
+   amrex::Real m_dt;
+   amrex::Real m_theta;
+   amrex::Real m_dV_inv;
    amrex::Periodicity m_period;
+#if USE_CURLB_MATRIX
+   std::array<amrex::LayoutData<T>,3>& m_matA_B2E; // magnetic effect on electric (curl B), each component of B input is separated into different matrices - only changes when BoxArray changes
+#endif
+#if USE_CURLE_MATRIX
+   std::array<amrex::LayoutData<U>,3>& m_matA_E2B; // electric effect on magnetic (curl E), each component of B output is separated into different matrices - only changes when BoxArray changes
+#endif
+#if USE_CURRENT_MATRIX
+   amrex::LayoutData<V>& m_matA_E2E; // electric self-interaction (particle current) - changes every time step
+#endif
+   const std::vector<Population>& m_pop_list;
+   std::vector<myPContainer>& m_pContainer_list;
 public:
    using RT = amrex::Real;
    
-   linop(const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, int nghost, const amrex::GpuArray<RT,3>& dx, RT tFactor, const amrex::Periodicity& period) : m_ba(convert(ba,AMReXConst::btype_c)), m_dm(dm), m_nghost(nghost), m_dx(dx), m_tFactor(tFactor), m_period(period) {}
+   linop(const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, int nghost, const amrex::GpuArray<RT,3>& dx, RT dt, RT theta, const amrex::Periodicity& period,
+#if USE_CURLB_MATRIX
+         std::array<amrex::LayoutData<T>,3>& matA_B2E,
+#endif
+#if USE_CURLE_MATRIX
+         std::array<amrex::LayoutData<U>,3>& matA_E2B,
+#endif
+#if USE_CURRENT_MATRIX
+         amrex::LayoutData<V>& matA_E2E,
+#endif
+         const std::vector<Population>& pop_list, std::vector<myPContainer>& pContainer_list) :
+      m_ba(convert(ba,AMReXConst::btype_c)),
+      m_dm(dm),
+      m_nghost(nghost),
+      m_dx(dx),
+      m_dt(dt),
+      m_theta(theta),
+      m_dV_inv(1/math::product(dx)),
+      m_period(period),
+#if USE_CURLB_MATRIX
+      m_matA_B2E(matA_B2E),
+#endif
+#if USE_CURLE_MATRIX
+      m_matA_E2B(matA_E2B),
+#endif
+#if USE_CURRENT_MATRIX
+      m_matA_E2E(matA_E2E),
+#endif
+      m_pop_list(pop_list),
+      m_pContainer_list(pContainer_list) {}
 
    virtual ~linop() = default;
    
@@ -406,13 +461,48 @@ public:
    }
    void setDx(const amrex::GpuArray<RT,3>& dx) {
       m_dx = dx;
+      m_dV_inv = 1/math::product(dx);
    }
-   void setTFactor(RT tFactor) {
-      m_tFactor = tFactor;
+   void setDt(RT dt) {
+      m_dt = dt;
+   }
+   void setTheta(RT theta) {
+      m_theta = theta;
    }
    
    // Actual operator matrix product, i.e. x input, Ax output
-   virtual void apply(BE& Ax, const BE& x) = 0;
+   void apply(BE& Ax, const BE& x) {
+      BL_PROFILE("gmres_apply()");
+      
+      BE::Copy(Ax,x,0);
+
+      // Each operator - curl B, curl E, current - can be applied as matrix or direct operator
+      // For direct operator, provide nullptr to linop construction
+      
+      BL_PROFILE_VAR("apply_matrix_B2E()",TIMER_curl_Bf);
+#if USE_CURLE_MATRIX
+      BE::apply_matrix_B2E(Ax, x, *m_matA_B2E, -m_dt*m_theta*math::square(PhysConst::c));
+#else
+      curl_f2n(Ax.getE_n(), x.getB_fx_const(), x.getB_fy_const(), x.getB_fz_const(), m_dx, -m_dt*m_theta*math::square(PhysConst::c));
+#endif
+      BL_PROFILE_VAR_STOP(TIMER_curl_Bf);
+   
+      BL_PROFILE_VAR("apply_matrix_E2B()",TIMER_curl_En);
+#if USE_CURLB_MATRIX
+      BE::apply_matrix_E2B(Ax, x, *m_matA_E2B, m_dt*m_theta);
+#else
+      curl_n2f(Ax.getB_fx(), Ax.getB_fy(), Ax.getB_fz(), x.getE_n_const(), m_dx, m_dt*m_theta);
+#endif
+      BL_PROFILE_VAR_STOP(TIMER_curl_En);   
+      
+      BL_PROFILE_VAR("gmres_current",TIMER_current);
+#if USE_CURRENT_MATRIX
+      // apply_matrix_E2E(Ax, x, *m_matA_E2E, m_dt*m_theta/PhysConst::eps0);
+#else
+      compute_jHat_en_all(Ax.getE_n(), m_dt, m_theta, x.getB_fx_const(), x.getB_fy_const(), x.getB_fz_const(), x.getE_n_const(), m_pContainer_list, m_pop_list, m_dV_inv, m_dt*m_theta/PhysConst::eps0);
+#endif
+      BL_PROFILE_VAR_STOP(TIMER_current);
+   }
    
    // Assign lhs = rhs
    static void assign(BE& lhs, const BE& rhs) {
@@ -461,71 +551,32 @@ public:
    static void setToZero(BE& v) { v.setVal(0.0); }
 };
 
-// GMRES linear operator class, non matrix version (calculates curl etc. directly)
-class linop_direct: public linop {
-private:
-   RT m_theta;
-   RT m_dt;
-   std::vector<Population> m_pop_list;
-   RT m_dV_inv;
-   std::vector<myPContainer>& m_pContainer_list;
-public:
-   linop_direct(const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, int nghost, const amrex::GpuArray<RT,3>& dx, RT dt, RT theta, const amrex::Periodicity& period, std::vector<myPContainer>& pContainer_list, const std::vector<Population>& pop_list, RT dV_inv) : linop { ba, dm, nghost, dx, dt*theta, period }, m_theta(theta), m_dt(dt), m_pop_list(pop_list), m_dV_inv(dV_inv), m_pContainer_list(pContainer_list) {}
-   
-   void apply(BE& Ax, const BE& x) {
-      BL_PROFILE("gmres_apply()");
-      
-      BE::Copy(Ax,x,0);
-      
-      BL_PROFILE_VAR("gmres_curl_En()",TIMER_curl_En);
-      curl_n2f(Ax.getB_fx(), Ax.getB_fy(), Ax.getB_fz(), x.getE_n_const(), m_dx, m_tFactor);
-      BL_PROFILE_VAR_STOP(TIMER_curl_En);
-
-      BL_PROFILE_VAR("gmres_curl_Bf()",TIMER_curl_Bf);
-      curl_f2n(Ax.getE_n(), x.getB_fx_const(), x.getB_fy_const(), x.getB_fz_const(), m_dx, -m_tFactor*math::square(PhysConst::c));
-      BL_PROFILE_VAR_STOP(TIMER_curl_Bf);
-
-      BL_PROFILE_VAR("gmres_current()",TIMER_current);
-      compute_jHat_en_all(Ax.getE_n(), m_dt, m_theta, x.getB_fx_const(), x.getB_fy_const(), x.getB_fz_const(), x.getE_n_const(), m_pContainer_list, m_pop_list, m_dV_inv, m_dt*m_theta/PhysConst::eps0);
-      BL_PROFILE_VAR_STOP(TIMER_current);
-   }
-};
-
-// GMRES linear operator class, using matrix representations of operators
-// The "vector" is a class BE consisting of MultiFabs of B and E, and ahandful of class methods for norms etc.
-// They cannot be combined into a single MultiFab as they do not share the same grid
-template <typename T, typename U, typename V>
-class linop_matrix: public linop {
-private:
-   std::array<amrex::LayoutData<T>,3> m_matA_B2E; // magnetic effect on electric (curl B), each component of B input is separated into different matrices - only changes when BoxArray changes
-   std::array<amrex::LayoutData<U>,3> m_matA_E2B; // electric effect on magnetic (curl E), each component of B output is separated into different matrices - only changes when BoxArray changes
-   amrex::LayoutData<V> m_matA_E2E; // electric self-interaction (particle current) - changes every time step
-public:
-   linop_matrix(const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, int nghost, const amrex::GpuArray<RT,3>& dx, RT tFactor, const amrex::Periodicity& period, const std::array<amrex::LayoutData<T>,3>& matA_B2E, const std::array<amrex::LayoutData<U>,3>& matA_E2B, const amrex::LayoutData<V> matA_E2E) : linop { ba, dm, nghost, dx, tFactor, period }, m_matA_B2E(matA_B2E), m_matA_E2B(matA_E2B), m_matA_E2E(matA_E2E) {}
-   
-   void apply(BE& Ax, const BE& x) {
-      BL_PROFILE("gmres_apply()");
-      
-      BE::Copy(Ax,x,0);
-      
-      BL_PROFILE_VAR("apply_matrix_E2B()",TIMER_curl_En);
-      BE::apply_matrix_E2B(Ax, x, m_matA_E2B, m_tFactor);
-      BL_PROFILE_VAR_STOP(TIMER_curl_En);
-      
-      BL_PROFILE_VAR("apply_matrix_B2E()",TIMER_curl_Bf);
-      BE::apply_matrix_B2E(Ax, x, m_matA_B2E, -m_tFactor*math::square(PhysConst::c));
-      BL_PROFILE_VAR_STOP(TIMER_curl_Bf);
-      
-      // BL_PROFILE_VAR("gmres_current",TIMER_current);
-      // apply_matrix_E2E(Ax, x, m_matA_E2E, m_tFactor/PhysConst::eps0);
-      // BL_PROFILE_VAR_STOP(TIMER_current);
-   }
-};
-
 // Advance B and E fields by solving gmres system using matrices
 // all three can be freely chosen as sparse or not
-template <typename T, typename U, typename V>
-void gmres_step(BE& x, const std::array<amrex::LayoutData<T>,3>& matA_B2E, const std::array<amrex::LayoutData<U>,3>& matA_E2B, const amrex::LayoutData<V>& matA_E2E, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::Real dt, const amrex::Real theta, const amrex::Real rtol, const amrex::Real atol, const int verbosity, const int max_gmres) {
+#if USE_CURLB_MATRIX || USE_CURLE_MATRIX || USE_CURRENT_MATRIX
+template <
+#if USE_CURLB_MATRIX
+   typename T,
+#endif
+#if USE_CURLE_MATRIX
+   typename U,
+#endif
+#if USE_CURRENT_MATRIX
+   typename V
+#endif
+   >
+#endif
+inline void gmres_step(BE& x, const amrex::MultiFab& jHat, std::vector<Population>& pop_list, std::vector<myPContainer>& pContainer_list,
+#if USE_CURLB_MATRIX
+                std::array<amrex::LayoutData<T>,3>& matA_B2E,
+#endif
+#if USE_CURLE_MATRIX
+                std::array<amrex::LayoutData<U>,3>& matA_E2B,
+#endif
+#if USE_CURRENT_MATRIX
+                amrex::LayoutData<V>& matA_E2E,
+#endif
+                const amrex::GpuArray<amrex::Real,3>& dx, const amrex::Real dt, const amrex::Real theta, const amrex::Real rtol, const amrex::Real atol, const int verbosity = 0, const int max_gmres = 2000) {
    BL_PROFILE("gmres_step()");
    
    // To prevent reallocation every step, state vector BE and curl results are pre-allocated static
@@ -541,10 +592,50 @@ void gmres_step(BE& x, const std::array<amrex::LayoutData<T>,3>& matA_B2E, const
    // Calculate curls of initial state and add to b
    curl_n2f(b.getB_fx(), b.getB_fy(), b.getB_fz(), x.getE_n_const(), dx, -dt*(1-theta));
    curl_f2n(b.getE_n(), x.getB_fx_const(), x.getB_fy_const(), x.getB_fz_const(), dx, math::square(PhysConst::c)*dt*(1-theta));
+
+   BE::Saxpy_En(b, jHat, -dt/PhysConst::eps0);
    
-   linop_matrix<T,U,V> gmres_operator(x.getBoxArray(), x.getDistributionMap(), x.nghost(), dx, dt*theta, x.getPeriod(), matA_B2E, matA_E2B, matA_E2E);
+   linop
+#if USE_CURLB_MATRIX || USE_CURLE_MATRIX || USE_CURRENT_MATRIX
+      <
+#if USE_CURLB_MATRIX
+      T,
+#endif
+#if USE_CURLE_MATRIX
+      U,
+#endif
+#if USE_CURRENT_MATRIX
+      V
+#endif
+      >
+#endif
+      gmres_operator(x.getBoxArray(), x.getDistributionMap(), x.nghost(), dx, dt, theta, x.getPeriod(),
+#if USE_CURLB_MATRIX
+                               matA_B2E,
+#endif
+#if USE_CURLE_MATRIX
+                               matA_E2B,
+#endif
+#if USE_CURRENT_MATRIX
+                               matA_E2E,
+#endif
+                               pop_list, pContainer_list);
    
-   amrex::GMRES<BE,linop_matrix<T,U,V>> gmres_solver;
+   amrex::GMRES<BE,linop
+                #if USE_CURLB_MATRIX || USE_CURLE_MATRIX || USE_CURRENT_MATRIX
+      <
+#if USE_CURLB_MATRIX
+      T,
+#endif
+#if USE_CURLE_MATRIX
+      U,
+#endif
+#if USE_CURRENT_MATRIX
+      V
+#endif
+      >
+#endif
+                > gmres_solver;
    
    gmres_solver.define(gmres_operator);
    gmres_solver.setVerbose(verbosity);
@@ -561,8 +652,6 @@ void gmres_step(BE& x, const std::array<amrex::LayoutData<T>,3>& matA_B2E, const
       amrex::Print() << "GMRES Iteration count: " << gmres_solver.getNumIters() << std::endl;
    }
 }
-
-void gmres_step(BE& x, const amrex::MultiFab& jHat, std::vector<myPContainer>& pContainer_list, std::vector<Population>& pop_list, const amrex::Real dV_inv, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::Real dt, const amrex::Real theta, const amrex::Real rtol, const amrex::Real atol, const int verbosity = 0, const int max_gmres = 2000);
 
 void get_curl_f2n_operator(matrix<amrex::Real>& curl_x, matrix<amrex::Real>& curl_y, matrix<amrex::Real>& curl_z, const amrex::Box& bx, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx);
                            
@@ -648,36 +737,24 @@ inline void get_curl_n2f_operator(std::array<sp_matrix<amrex::Real>,3>& curl, co
    get_curl_n2f_operator(curl[0], curl[1], curl[2], bx, nghost, dx);
 }
 
-// Compute curl operators for entire BoxArray
-template <typename T, typename U>
-void get_curl_operators_ba(std::array<amrex::LayoutData<T>,3>& matA_f2n, std::array<amrex::LayoutData<U>,3>& matA_n2f, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm) {
+// Compute curl f2n operator for entire BoxArray
+template <typename T>
+void get_curl_f2n_operator_ba(std::array<amrex::LayoutData<T>,3>& matA_f2n, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm) {
    for (amrex::MFIter mfi(ba,dm); mfi.isValid(); ++mfi) {
       const amrex::Box&
          bx_n = mfi.tilebox(AMReXConst::btype_n),
-         bx_fx = convert(bx_n,AMReXConst::btype_fx),
-         bx_fy = convert(bx_n,AMReXConst::btype_fy),
-         bx_fz = convert(bx_n,AMReXConst::btype_fz),
-         bx_n_ghost = grow(bx_n, nghost),
-         bx_fx_ghost = grow(bx_fx, nghost),
-         bx_fy_ghost = grow(bx_fy, nghost),
-         bx_fz_ghost = grow(bx_fz, nghost);
+         bx_fx_ghost = grow(convert(bx_n,AMReXConst::btype_fx), nghost),
+         bx_fy_ghost = grow(convert(bx_n,AMReXConst::btype_fy), nghost),
+         bx_fz_ghost = grow(convert(bx_n,AMReXConst::btype_fz), nghost);
       
       const amrex::IntVect
          len_n = bx_n.length(),
-         len_fx = bx_fx.length(),
-         len_fy = bx_fy.length(),
-         len_fz = bx_fz.length(),
-         len_n_ghost = bx_n_ghost.length(),
          len_fx_ghost = bx_fx_ghost.length(),
          len_fy_ghost = bx_fy_ghost.length(),
          len_fz_ghost = bx_fz_ghost.length();
    
       const int
          total_n = math::product(len_n),
-         total_fx = math::product(len_fx),
-         total_fy = math::product(len_fy),
-         total_fz = math::product(len_fz),
-         total_n_ghost = math::product(len_n_ghost),
          total_fx_ghost = math::product(len_fx_ghost),
          total_fy_ghost = math::product(len_fy_ghost),
          total_fz_ghost = math::product(len_fz_ghost);
@@ -695,7 +772,34 @@ void get_curl_operators_ba(std::array<amrex::LayoutData<T>,3>& matA_f2n, std::ar
          matA_f2n[2][mfi] = sp_matrix<amrex::Real>(2*cols_per_row_f2n*total_n, 3*total_n, total_fz_ghost);
       }
       
-      if constexpr (std::is_same<U, matrix<amrex::Real>>::value) {
+      get_curl_f2n_operator(matA_f2n[0][mfi], matA_f2n[1][mfi], matA_f2n[2][mfi], bx_n, nghost, dx);
+   }
+}
+
+// Compute curl n2f operator for entire BoxArray
+template <typename T>
+void get_curl_n2f_operator_ba(std::array<amrex::LayoutData<T>,3>& matA_n2f, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm) {
+   for (amrex::MFIter mfi(ba,dm); mfi.isValid(); ++mfi) {
+      const amrex::Box&
+         bx_fx = mfi.tilebox(AMReXConst::btype_fx),
+         bx_fy = convert(bx_fx,AMReXConst::btype_fy),
+         bx_fz = convert(bx_fx,AMReXConst::btype_fz),
+         bx_n_ghost = grow(convert(bx_fx,AMReXConst::btype_n), nghost);
+      
+      const amrex::IntVect
+         len_fx = bx_fx.length(),
+         len_fy = bx_fy.length(),
+         len_fz = bx_fz.length(),
+         len_n_ghost = bx_n_ghost.length();
+   
+      const int
+         total_fx = math::product(len_fx),
+         total_fy = math::product(len_fy),
+         total_fz = math::product(len_fz),
+         total_n_ghost = math::product(len_n_ghost);
+
+      // Conditional compilation of normal vs. sparse matrix construction
+      if constexpr (std::is_same<T, matrix<amrex::Real>>::value) {
          matA_n2f[0][mfi] = matrix<amrex::Real>(total_fx, 3*total_n_ghost, 0.0);
          matA_n2f[1][mfi] = matrix<amrex::Real>(total_fy, 3*total_n_ghost, 0.0);
          matA_n2f[2][mfi] = matrix<amrex::Real>(total_fz, 3*total_n_ghost, 0.0);
@@ -706,9 +810,8 @@ void get_curl_operators_ba(std::array<amrex::LayoutData<T>,3>& matA_f2n, std::ar
          matA_n2f[1][mfi] = sp_matrix<amrex::Real>(cols_per_row_n2f*total_fy, total_fy, 3*total_n_ghost);
          matA_n2f[2][mfi] = sp_matrix<amrex::Real>(cols_per_row_n2f*total_fz, total_fz, 3*total_n_ghost);
       }
-         
-      get_curl_f2n_operator(matA_f2n[0][mfi], matA_f2n[1][mfi], matA_f2n[2][mfi], bx_n, nghost, dx);
-      get_curl_n2f_operator(matA_n2f[0][mfi], matA_n2f[1][mfi], matA_n2f[2][mfi], bx_n, nghost, dx);
+      
+      get_curl_n2f_operator(matA_n2f[0][mfi], matA_n2f[1][mfi], matA_n2f[2][mfi], bx_fx, nghost, dx);
    }
 }
 

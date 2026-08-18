@@ -14,6 +14,9 @@ USE_HDF5 = TRUE
 PRECISION = DOUBLE
 TINY_PROFILE = TRUE
 PROFILE = FALSE
+USE_CURLB_MATRIX = TRUE    # Use matrices for curl B
+USE_CURLE_MATRIX = TRUE    # Use matrices for curl E
+USE_CURRENT_MATRIX = FALSE # Use matrices for current due to E^{n+1}
 
 include Make.package
 include $(AMREX_HOME)/Tools/GNUMake/Make.defs

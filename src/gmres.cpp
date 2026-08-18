@@ -38,45 +38,6 @@ Author(s): David Phillips
 
 using namespace amrex;
 
-// Advance B and E fields by solving gmres system
-void gmres_step(BE& x, const MultiFab& jHat, std::vector<myPContainer>& pContainer_list, std::vector<Population>& pop_list, const Real dV_inv, const GpuArray<Real,3>& dx, const Real dt, const Real theta, const Real rtol, const Real atol, const int verbosity, const int max_gmres) {
-   BL_PROFILE("gmres_step()");
-   
-   // To prevent reallocation every step, rhs state vector b is static
-   // This may have issues if using omp
-   static BE
-      b = x.copy_dim(0);
-
-   b.setVal(0.0);
-   
-   // rhs; first includes initial B and E so copy x without ghost cells
-   BE::Copy(b, x, 0);
-   
-   curl_n2f(b.getB_fx(), b.getB_fy(), b.getB_fz(), x.getE_n_const(), dx, -dt*(1-theta));
-   curl_f2n(b.getE_n(), x.getB_fx_const(), x.getB_fy_const(), x.getB_fz_const(), dx, math::square(PhysConst::c)*dt*(1-theta));
-
-   BE::Saxpy_En(b, jHat, -dt/PhysConst::eps0);
-   
-   linop_direct gmres_operator(x.getBoxArray(), x.getDistributionMap(), x.nghost(), dx, dt, theta, x.getPeriod(), pContainer_list, pop_list, dV_inv);
-   
-   GMRES<BE,linop_direct> gmres_solver;
-   
-   gmres_solver.define(gmres_operator);
-   gmres_solver.setVerbose(verbosity);
-   gmres_solver.setMaxIters(max_gmres);
-   gmres_solver.solve(x, b, rtol, atol);
-   
-   int gmres_status = gmres_solver.getStatus();
-   
-   if (gmres_status > 0) {
-      Print() << std::endl << "GMRES failed to converge!" << std::endl
-              << "Iteration count: " << gmres_solver.getNumIters() << std::endl
-              << "Residual norm: " << gmres_solver.getResidualNorm() << std::endl << std::endl;
-   } else {
-      Print() << "GMRES Iteration count: " << gmres_solver.getNumIters() << std::endl;
-   }
-}
-
 /*
 // Compute the curl operator for a given box from faces to nodes
 // This function only needs to be computed once per box so speed is not that important
