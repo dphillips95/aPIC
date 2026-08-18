@@ -25,6 +25,7 @@ Author(s): David Phillips
 #include <gmres.h>
 #include <constants.h>
 #include <operators.h>
+#include <particles.h>
 #include <math_functions.h>
 #include <matrix.h>
 
@@ -38,7 +39,7 @@ Author(s): David Phillips
 using namespace amrex;
 
 // Advance B and E fields by solving gmres system
-void gmres_step(BE& x, GpuArray<Real,3> dx, Real dt, Real theta, Real rtol, Real atol, int verbosity) {
+void gmres_step(BE& x, const MultiFab& jHat, std::vector<myPContainer>& pContainer_list, std::vector<Population>& pop_list, const Real dV_inv, const GpuArray<Real,3>& dx, const Real dt, const Real theta, const Real rtol, const Real atol, const int verbosity, const int max_gmres) {
    BL_PROFILE("gmres_step()");
    
    // To prevent reallocation every step, rhs state vector b is static
@@ -53,13 +54,16 @@ void gmres_step(BE& x, GpuArray<Real,3> dx, Real dt, Real theta, Real rtol, Real
    
    curl_n2f(b.getB_fx(), b.getB_fy(), b.getB_fz(), x.getE_n_const(), dx, -dt*(1-theta));
    curl_f2n(b.getE_n(), x.getB_fx_const(), x.getB_fy_const(), x.getB_fz_const(), dx, math::square(PhysConst::c)*dt*(1-theta));
+
+   BE::Saxpy_En(b, jHat, -dt/PhysConst::eps0);
    
-   linop_direct gmres_operator(x.getBoxArray(), x.getDistributionMap(), x.nghost(), dx, dt*theta, x.getPeriod());
+   linop_direct gmres_operator(x.getBoxArray(), x.getDistributionMap(), x.nghost(), dx, dt, theta, x.getPeriod(), pContainer_list, pop_list, dV_inv);
    
    GMRES<BE,linop_direct> gmres_solver;
    
    gmres_solver.define(gmres_operator);
    gmres_solver.setVerbose(verbosity);
+   gmres_solver.setMaxIters(max_gmres);
    gmres_solver.solve(x, b, rtol, atol);
    
    int gmres_status = gmres_solver.getStatus();
@@ -303,17 +307,19 @@ void get_curl_f2n_operator(matrix<Real>& curl_x, matrix<Real>& curl_y, matrix<Re
       len_n = bx_n.length();
    
    const int total_n = math::product(len_n);
+
+   const IntVect base_index { bx_n.smallEnd() };
    
    ParallelFor(bx_n, [&](int ii, int jj, int kk) {
       // Coords of node and adjacent faces
       const IntVect
-         cell_000(ii,     jj,     kk    ),
-         cell_001(ii,     jj,     kk - 1),
-         cell_010(ii,     jj - 1, kk    ),
-         cell_011(ii,     jj - 1, kk - 1),
-         cell_100(ii - 1, jj,     kk    ),
-         cell_101(ii - 1, jj,     kk - 1),
-         cell_110(ii - 1, jj - 1, kk    );
+         cell_000 = IntVect(ii, jj, kk) - base_index,
+         cell_100 = cell_000 - IntVect(1,0,0),
+         cell_010 = cell_000 - IntVect(0,1,0),
+         cell_110 = cell_000 - IntVect(1,1,0),
+         cell_001 = cell_000 - IntVect(0,0,1),
+         cell_101 = cell_000 - IntVect(1,0,1),
+         cell_011 = cell_000 - IntVect(0,1,1);
       
       // Find column in matrix for each face
       // Each face box has different dimensions, and
@@ -392,13 +398,15 @@ void get_curl_n2f_operator(matrix<Real>& curl_x, matrix<Real>& curl_y, matrix<Re
       len_n = bx_n.length();
    
    const int total_n = math::product(len_n);
+
+   const IntVect base_index_x { bx_fx.smallEnd() };
    
    ParallelFor(bx_fx, [&](int ii, int jj, int kk) {
       const IntVect
-         cell_000(ii,   jj,   kk  ),
-         cell_001(ii,   jj,   kk+1),
-         cell_010(ii,   jj+1, kk  ),
-         cell_011(ii,   jj+1, kk+1);
+         cell_000 = IntVect(ii, jj, kk) - base_index_x,
+         cell_010 = cell_000 + IntVect(0,1,0),
+         cell_001 = cell_000 + IntVect(0,0,1),
+         cell_011 = cell_000 + IntVect(0,1,1);
       // Find column in matrix for each node
       // Each face box has different dimensions, and
       // Matrix rows are organised as x-faces first then y- and z-
@@ -425,13 +433,15 @@ void get_curl_n2f_operator(matrix<Real>& curl_x, matrix<Real>& curl_y, matrix<Re
       curl_x(fxID_000, nzID_001) -= grad_y;
       curl_x(fxID_000, nzID_000) -= grad_y;
    });
-
+   
+   const IntVect base_index_y { bx_fy.smallEnd() };
+   
    ParallelFor(bx_fy, [&](int ii, int jj, int kk) {
       const IntVect
-         cell_000(ii,   jj,   kk  ),
-         cell_001(ii,   jj,   kk+1),
-         cell_100(ii+1, jj,   kk  ),
-         cell_101(ii+1, jj,   kk+1);
+         cell_000 = IntVect(ii, jj, kk) - base_index_y,
+         cell_100 = cell_000 + IntVect(1,0,0),
+         cell_001 = cell_000 + IntVect(0,0,1),
+         cell_101 = cell_000 + IntVect(1,0,1);
       // Find column in matrix for each node
       // Each face box has different dimensions, and
       // Matrix rows are organised as x-faces first then y- and z-
@@ -459,12 +469,14 @@ void get_curl_n2f_operator(matrix<Real>& curl_x, matrix<Real>& curl_y, matrix<Re
       curl_y(fyID_000, nxID_000) -= grad_z;
    });
    
+   const IntVect base_index_z { bx_fz.smallEnd() };
+   
    ParallelFor(bx_fz, [&](int ii, int jj, int kk) {
       const IntVect
-         cell_000(ii,   jj,   kk  ),
-         cell_010(ii,   jj+1, kk  ),
-         cell_100(ii+1, jj,   kk  ),
-         cell_110(ii+1, jj+1, kk  );
+         cell_000 = IntVect(ii, jj, kk) - base_index_z,
+         cell_100 = cell_000 + IntVect(1,0,0),
+         cell_010 = cell_000 + IntVect(0,1,0),
+         cell_110 = cell_000 + IntVect(1,1,0);
       // Find column in matrix for each node
       // Each face box has different dimensions, and
       // Matrix rows are organised as x-faces first then y- and z-
@@ -497,7 +509,7 @@ void get_curl_n2f_operator(matrix<Real>& curl_x, matrix<Real>& curl_y, matrix<Re
 // This function only needs to be computed once per box so speed is not that important
 // This function returns three separate sparse matrices for the three components of B_f in the input x of Ax
 // NB: The box passed should not contain ghost cells
-void get_curl_f2n_operator_sparse(sp_matrix<Real>& curl_x, sp_matrix<Real>& curl_y, sp_matrix<Real>& curl_z, const Box& bx, const int nghost, const GpuArray<Real,3>& dx) {
+void get_curl_f2n_operator(sp_matrix<Real>& curl_x, sp_matrix<Real>& curl_y, sp_matrix<Real>& curl_z, const Box& bx, const int nghost, const GpuArray<Real,3>& dx) {
    
    const Real
       grad_x = 1/(2*dx[0]),
@@ -692,7 +704,7 @@ void get_curl_f2n_operator_sparse(sp_matrix<Real>& curl_x, sp_matrix<Real>& curl
 // Compute the curl operator for a given box from nodes to faces
 // This function only needs to be computed once per box so speed is not that important
 // NB: The box passed should not contain ghost cells
-void get_curl_n2f_operator_sparse(sp_matrix<Real>& curl_x, sp_matrix<Real>& curl_y, sp_matrix<Real>& curl_z, const Box& bx, const int nghost, const GpuArray<Real,3>& dx) {
+void get_curl_n2f_operator(sp_matrix<Real>& curl_x, sp_matrix<Real>& curl_y, sp_matrix<Real>& curl_z, const Box& bx, const int nghost, const GpuArray<Real,3>& dx) {
 
    const Real
       grad_x = 1/(2*dx[0]),
@@ -886,66 +898,6 @@ void get_curl_n2f_operator_sparse(sp_matrix<Real>& curl_x, sp_matrix<Real>& curl
    curl_x.add_chunk(dat_x, row_indices_x, col_indices_x);
    curl_y.add_chunk(dat_y, row_indices_y, col_indices_y);
    curl_z.add_chunk(dat_z, row_indices_z, col_indices_z);
-}
-
-void get_curl_operators_sparse_ba(std::array<LayoutData<sp_matrix<Real>>,3>& matA_f2n, std::array<LayoutData<sp_matrix<Real>>,3>& matA_n2f, const int nghost, const GpuArray<Real,3>& dx, const BoxArray& ba, const DistributionMapping& dm) {
-   for (MFIter mfi(ba,dm); mfi.isValid(); ++mfi) {
-      const Box&
-         bx_n = mfi.tilebox(AMReXConst::btype_n),
-         bx_fx = convert(bx_n,AMReXConst::btype_fx),
-         bx_fy = convert(bx_n,AMReXConst::btype_fy),
-         bx_fz = convert(bx_n,AMReXConst::btype_fz),
-         bx_n_ghost = grow(bx_n, nghost),
-         bx_fx_ghost = grow(bx_fx, nghost),
-         bx_fy_ghost = grow(bx_fy, nghost),
-         bx_fz_ghost = grow(bx_fz, nghost);
-      
-      const IntVect
-         len_n = bx_n.length(),
-         len_fx = bx_fx.length(),
-         len_fy = bx_fy.length(),
-         len_fz = bx_fz.length(),
-         len_n_ghost = bx_n_ghost.length(),
-         len_fx_ghost = bx_fx_ghost.length(),
-         len_fy_ghost = bx_fy_ghost.length(),
-         len_fz_ghost = bx_fz_ghost.length();
-   
-      const int
-         total_n = math::product(len_n),
-         total_fx = math::product(len_fx),
-         total_fy = math::product(len_fy),
-         total_fz = math::product(len_fz),
-         total_n_ghost = math::product(len_n_ghost),
-         total_fx_ghost = math::product(len_fx_ghost),
-         total_fy_ghost = math::product(len_fy_ghost),
-         total_fz_ghost = math::product(len_fz_ghost);
-      
-      constexpr int
-         cols_per_row_f2n = 4,
-         cols_per_row_n2f = 8;
-      
-      /*
-      // Non-sparse version
-      matA_f2n[0][mfi] = matrix<Real>(3*total_n, total_fx_ghost, 0.0);
-      matA_f2n[1][mfi] = matrix<Real>(3*total_n, total_fy_ghost, 0.0);
-      matA_f2n[2][mfi] = matrix<Real>(3*total_n, total_fz_ghost, 0.0);
-      
-      matA_n2f[0][mfi] = matrix<Real>(total_fx, 3*total_n_ghost, 0.0);
-      matA_n2f[1][mfi] = matrix<Real>(total_fy, 3*total_n_ghost, 0.0);
-      matA_n2f[2][mfi] = matrix<Real>(total_fz, 3*total_n_ghost, 0.0);
-      */
-      
-      matA_f2n[0][mfi] = sp_matrix<Real>(2*cols_per_row_f2n*total_n, 3*total_n, total_fx_ghost);
-      matA_f2n[1][mfi] = sp_matrix<Real>(2*cols_per_row_f2n*total_n, 3*total_n, total_fy_ghost);
-      matA_f2n[2][mfi] = sp_matrix<Real>(2*cols_per_row_f2n*total_n, 3*total_n, total_fz_ghost);
-      
-      matA_n2f[0][mfi] = sp_matrix<Real>(cols_per_row_n2f*total_fx, total_fx, 3*total_n_ghost);
-      matA_n2f[1][mfi] = sp_matrix<Real>(cols_per_row_n2f*total_fy, total_fy, 3*total_n_ghost);
-      matA_n2f[2][mfi] = sp_matrix<Real>(cols_per_row_n2f*total_fz, total_fz, 3*total_n_ghost);
-      
-      get_curl_f2n_operator_sparse(matA_f2n[0][mfi], matA_f2n[1][mfi], matA_f2n[2][mfi], bx_n, nghost, dx);
-      get_curl_n2f_operator_sparse(matA_n2f[0][mfi], matA_n2f[1][mfi], matA_n2f[2][mfi], bx_n, nghost, dx);
-   }
 }
 
 /*

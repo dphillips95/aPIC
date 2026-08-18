@@ -101,25 +101,63 @@ void fill_particles_cell(myPTile& parts, const size_t count, const amrex::Real v
 void particlePusher(myPContainer& pContainer, const amrex::Real dt);
 
 // Push all particle populations
-inline void particlePusher_all(std::vector<std::unique_ptr<myPContainer>>& pContainer_list, const amrex::Real dt) {
-   for (auto& pContainer : pContainer_list) {
-      particlePusher(*pContainer, dt);
+inline void particlePusher_all(std::vector<myPContainer>& pContainer_list, const amrex::Real dt) {
+   for (myPContainer& pContainer : pContainer_list) {
+      particlePusher(pContainer, dt);
    }
 }
 
-void compute_jHat(amrex::MultiFab& jHat, const amrex::Real beta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const myPContainer& pContainer);
+void compute_jHat(amrex::MultiFab& jHat, const amrex::Real beta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const myPContainer& pContainer, amrex::Real factor);
 
 // Add contributions to jHat from all populations
-inline void compute_jHat_all(amrex::MultiFab& jHat, const amrex::Real dt_theta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const std::vector<std::unique_ptr<myPContainer>>& pContainer_list, const std::vector<Population>& pop_list, const amrex::GpuArray<amrex::Real,3>& dx) {
+inline void compute_jHat_all(amrex::MultiFab& jHat, const amrex::Real dt_theta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, std::vector<myPContainer>& pContainer_list, const std::vector<Population>& pop_list, const amrex::Real dV_inv) {
    for (size_t nn=0; nn<pContainer_list.size(); ++nn) {
       amrex::Real beta = dt_theta*pop_list[nn].charge/pop_list[nn].mass;
-      compute_jHat(jHat, beta, B_fx, B_fy, B_fz, *pContainer_list[nn]);
+      compute_jHat(jHat, beta, B_fx, B_fy, B_fz, pContainer_list[nn], dV_inv);
    }
-   
-   jHat.mult(1/math::product(dx));
+}
+
+void compute_jHat_pr(amrex::MultiFab& jHat_pr, const amrex::Real beta, const amrex::Real theta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const amrex::MultiFab& E_n, const myPContainer& pContainer, const amrex::Real factor);
+
+// Add contributions to jHat_pr from all populations
+inline void compute_jHat_pr_all(amrex::MultiFab& jHat_pr, const amrex::Real dt, const amrex::Real theta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const amrex::MultiFab& E_n, std::vector<myPContainer>& pContainer_list, const std::vector<Population>& pop_list, const amrex::Real dV_inv) {
+   for (size_t nn=0; nn<pContainer_list.size(); ++nn) {
+      amrex::Real beta = dt*theta*pop_list[nn].charge/pop_list[nn].mass;
+      compute_jHat_pr(jHat_pr, beta, theta, B_fx, B_fy, B_fz, E_n, pContainer_list[nn], dV_inv);
+   }
+}
+
+void compute_jHat_en(amrex::MultiFab& jHat_en, const amrex::Real beta, const amrex::Real theta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const amrex::MultiFab& E_n, const myPContainer& pContainer, const amrex::Real factor);
+
+// Add contributions to jHat_en from all populations
+inline void compute_jHat_en_all(amrex::MultiFab& jHat_en, const amrex::Real dt, const amrex::Real theta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const amrex::MultiFab& E_n, std::vector<myPContainer>& pContainer_list, const std::vector<Population>& pop_list, const amrex::Real dV_inv, const amrex::Real factor) {
+   for (size_t nn=0; nn<pContainer_list.size(); ++nn) {
+      amrex::Real beta = dt*theta*pop_list[nn].charge/pop_list[nn].mass;
+      compute_jHat_en(jHat_en, beta, theta, B_fx, B_fy, B_fz, E_n, pContainer_list[nn], dV_inv*factor);
+   }
 }
 
 void accumulateDensityCurrentKE(amrex::MultiFab& density, amrex::MultiFab& current, amrex::MultiFab& KE_Energy, const myPContainer& pContainer, const Population& pop);
 void accumulateTemperature(amrex::MultiFab& temperature, const amrex::MultiFab& velocity, const amrex::MultiFab& density, const myPContainer& pContainer, const Population& pop);
+
+void constructEmptyMassMatrix(sp_matrix<amrex::Real>& mat_mass, const amrex::Box& bx, const int nghost);
+
+void fillMassMatrices(amrex::LayoutData<sp_matrix<amrex::Real>>& mat_mass, const int nghost, const amrex::Real beta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const myPContainer& pContainer, const Population& pop);
+void fillMassMatrices(amrex::LayoutData<matrix<amrex::Real>>& mat_mass, const int nghost, const amrex::Real beta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const myPContainer& pContainer, const Population& pop);
+
+template <typename T>
+inline void fillMassMatrices_all(amrex::LayoutData<T>& mat_mass, const int nghost, const amrex::Real dt, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, std::vector<myPContainer>& pContainer_list, const std::vector<Population>& pop_list, const amrex::Real dV_inv) {
+   for (size_t nn=0; nn<pContainer_list.size(); ++nn) {
+      amrex::Real beta = dt*pop_list[nn].charge/(2*pop_list[nn].mass);
+      fillMassMatrices(mat_mass, nghost, beta, B_fx, B_fy, B_fz, pContainer_list[nn], pop_list[nn]);
+   }
+
+   for (amrex::MFIter mfi(mat_mass); mfi.isValid(); ++mfi) {
+      mat_mass[mfi].scale(dV_inv);
+   }
+}
+// Construct empty mass matrices for entire BoxArray
+void constructEmptyMassMatrices_ba(amrex::LayoutData<matrix<amrex::Real>>& mat_mass, const int nghost, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm);
+void constructEmptyMassMatrices_ba(amrex::LayoutData<sp_matrix<amrex::Real>>& mat_mass, const int nghost, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm);
 
 #endif

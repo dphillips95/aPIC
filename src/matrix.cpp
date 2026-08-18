@@ -1,5 +1,5 @@
 /*
-Output header, containing output methods for aPIC.
+Matrix and sparse matrix methods for aPIC.
 
 Copyright 2026 Finnish Meteorological Institute.
 
@@ -22,18 +22,18 @@ License along with this program. If not, see
 Author(s): David Phillips
 */
 
-#include <gmres.h>
-#include <particles.h>
-
-#include <AMReX_REAL.H>
+#include <matrix.h>
 
 #include <vector>
 
-#ifndef OUTPUT_H_
-#define OUTPUT_H_
-
-void initialise_datalog(std::ofstream& datalog);
-
-void saveState(int step, amrex::Real time, const BE& EM_state, std::vector<myPContainer>& pContainer_list, const std::vector<Population>& pop_list, const amrex::Geometry& geom, std::ofstream& datalog);
-
-#endif
+// Check if row and col indices are in the correct ordering for insertion
+// i.e. first by row, then by col
+// This method does no sorting, and is intended only for debugging
+bool test_order(const std::vector<int>& row_indices, const std::vector<int>& col_indices) {
+   for (size_t ii=1; ii<row_indices.size(); ++ii) {
+      if (row_indices[ii] < row_indices[ii-1]) { return false; }
+      else if ((row_indices[ii] == row_indices[ii-1]) &&
+               (col_indices[ii] < col_indices[ii-1])) { return false; }
+   }
+   return true;
+}

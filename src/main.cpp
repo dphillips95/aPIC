@@ -77,6 +77,7 @@ int main(int argc, char* argv[]) {
          rand_Ez_min = 0, rand_Ez_max = 0;
       Real mass_ratio = PhysConst::m_p/PhysConst::m_e;
       int verbosity = 0;
+      int max_gmres = 2000;
       
       std::vector<Population> pop_list;
       
@@ -100,6 +101,7 @@ int main(int argc, char* argv[]) {
          inp_s.query("save_steps", save_steps);
          inp_s.query("mass_ratio", mass_ratio);
          inp_s.query("verbosity", verbosity);
+         inp_s.query("max_gmres", max_gmres);
          
          ParmParse inp_d("domain");
             
@@ -223,6 +225,10 @@ int main(int argc, char* argv[]) {
       geom.define(box_c, real_box, CoordSys::cartesian, periodicity);
       
       GpuArray<Real,3> dx = geom.CellSizeArray();
+
+      Real
+         dV = math::product(dx),
+         dV_inv = 1/dV;
       
       BoxArray
          ba_c(box_c); // cell-centred, others generated via conversion as needed
@@ -252,7 +258,7 @@ int main(int argc, char* argv[]) {
       };
 
       // Vector of particle containers
-      std::vector<std::unique_ptr<myPContainer>> pContainer_list;
+      std::vector<myPContainer> pContainer_list;
       pContainer_list.reserve(pop_count);
       
       // std::array<MultiFab,3> B_f = {
@@ -280,7 +286,7 @@ int main(int argc, char* argv[]) {
          MultiFab(ba_fz, dm, 1, nghost)
       };
       
-      // Distributed sparse matrices for curl operators
+      // Distributed matrices for curl operators
       std::array<LayoutData<sp_matrix<Real>>,3> matA_B2E = {
          LayoutData<sp_matrix<Real>>(ba_c,dm),
          LayoutData<sp_matrix<Real>>(ba_c,dm),
@@ -291,7 +297,7 @@ int main(int argc, char* argv[]) {
          LayoutData<sp_matrix<Real>>(ba_c,dm),
          LayoutData<sp_matrix<Real>>(ba_c,dm)
       };
-      LayoutData<sp_matrix<Real>> matA_E2E(ba_c,dm);
+      LayoutData<matrix<Real>> matA_E2E(ba_c,dm);
       
       E_n->setVal(0.0);
       for (int nn=0; nn<3; ++nn) {
@@ -418,8 +424,8 @@ int main(int argc, char* argv[]) {
 
       // Particles initial condition; fill with uniform distribution
       for (size_t ii=0; ii<pop_count; ++ii) {
-         pContainer_list.push_back(std::make_unique<myPContainer>(geom, dm, ba_c));
-         uniform_injector(*pContainer_list[ii], pop_list[ii]);
+         pContainer_list.emplace_back(geom, dm, ba_c);
+         uniform_injector(pContainer_list[ii], pop_list[ii]);
       }
       
       // Boundary conditions
@@ -457,82 +463,10 @@ int main(int argc, char* argv[]) {
       }
       
       // Generate curl operators
-      get_curl_operators_sparse_ba(matA_B2E, matA_E2B, nghost, dx, E_n->boxArray(), dm);
-      
-      /*
-      for (MFIter mfi(*E_n); mfi.isValid(); ++mfi) {
-         const Box&
-            bx_n = mfi.tilebox(AMReXConst::btype_n),
-            bx_n_ghost = grow(bx_n, nghost);
+      // get_curl_operators_ba(matA_B2E, matA_E2B, nghost, dx, E_n->boxArray(), dm);
 
-         const IntVect
-            len_n = bx_n.length(),
-            len_n_ghost = bx_n_ghost.length();
-         
-         const int
-            total_n = len_n[0]*len_n[1]*len_n[2],
-            total_n_ghost = len_n_ghost[0]*len_n_ghost[1]*len_n_ghost[2];
-         
-         const Box&
-            bx_fx_B2E = grow(convert(bx_n,AMReXConst::btype_fx), nghost),
-            bx_fy_B2E = grow(convert(bx_n,AMReXConst::btype_fy), nghost),
-            bx_fz_B2E = grow(convert(bx_n,AMReXConst::btype_fz), nghost),
-            bx_n_B2E = convert(bx_n,AMReXConst::btype_n),
-            bx_fx_E2B = convert(bx_n,AMReXConst::btype_fx),
-            bx_fy_E2B = convert(bx_n,AMReXConst::btype_fy),
-            bx_fz_E2B = convert(bx_n,AMReXConst::btype_fz),
-            bx_n_E2B = grow(convert(bx_n,AMReXConst::btype_n), nghost);
-   
-         const IntVect
-            len_fx_B2E = bx_fx_B2E.length(),
-            len_fy_B2E = bx_fy_B2E.length(),
-            len_fz_B2E = bx_fz_B2E.length(),
-            len_n_B2E = bx_n_B2E.length(),
-            len_fx_E2B = bx_fx_E2B.length(),
-            len_fy_E2B = bx_fy_E2B.length(),
-            len_fz_E2B = bx_fz_E2B.length(),
-            len_n_E2B = bx_n_E2B.length();
-   
-         const int
-            total_fx_B2E = math::product(len_fx_B2E),
-            total_fy_B2E = math::product(len_fy_B2E),
-            total_fz_B2E = math::product(len_fz_B2E),
-            total_n_B2E = math::product(len_n_B2E),
-            total_fx_E2B = math::product(len_fx_E2B),
-            total_fy_E2B = math::product(len_fy_E2B),
-            total_fz_E2B = math::product(len_fz_E2B),
-            total_n_E2B = math::product(len_n_E2B);
-         
-         constexpr int
-            cols_per_row_B2E = 4,
-            cols_per_row_E2B = 8;
-
-         matA_B2E[0][mfi] = matrix<Real>(3*total_n_B2E, total_fx_B2E, 0.0);
-         matA_B2E[1][mfi] = matrix<Real>(3*total_n_B2E, total_fy_B2E, 0.0);
-         matA_B2E[2][mfi] = matrix<Real>(3*total_n_B2E, total_fz_B2E, 0.0);
-
-         matA_E2B[0][mfi] = matrix<Real>(total_fx_E2B, 3*total_n_E2B, 0.0);
-         matA_E2B[1][mfi] = matrix<Real>(total_fy_E2B, 3*total_n_E2B, 0.0);
-         matA_E2B[2][mfi] = matrix<Real>(total_fz_E2B, 3*total_n_E2B, 0.0);
-         
-         matA_B2E[0][mfi] = sp_matrix<Real>(2*cols_per_row_B2E*total_n_B2E, 3*total_n_B2E, total_fx_B2E);
-         matA_B2E[1][mfi] = sp_matrix<Real>(2*cols_per_row_B2E*total_n_B2E, 3*total_n_B2E, total_fy_B2E);
-         matA_B2E[2][mfi] = sp_matrix<Real>(2*cols_per_row_B2E*total_n_B2E, 3*total_n_B2E, total_fz_B2E);
-
-         matA_E2B[0][mfi] = sp_matrix<Real>(cols_per_row_E2B*total_fx_E2B, total_fx_E2B, 3*total_n_E2B);
-         matA_E2B[1][mfi] = sp_matrix<Real>(cols_per_row_E2B*total_fy_E2B, total_fy_E2B, 3*total_n_E2B);
-         matA_E2B[2][mfi] = sp_matrix<Real>(cols_per_row_E2B*total_fz_E2B, total_fz_E2B, 3*total_n_E2B);
-         
-         get_curl_f2n_operator_sparse(matA_B2E[0][mfi], matA_B2E[1][mfi], matA_B2E[2][mfi], bx_n, nghost, dx);
-         get_curl_n2f_operator_sparse(matA_E2B[0][mfi], matA_E2B[1][mfi], matA_E2B[2][mfi], bx_n, nghost, dx);
-         
-         // matA_E2E[mfi] = matrix<Real>(total_n_ghost, total_n, 0.0);
-         matA_E2E[mfi] = sp_matrix<Real>(27*total_n_ghost, total_n_ghost, total_n);
-         
-      }
-      */
-
-      
+      // Generate empty mass matrices
+      // constructEmptyMassMatrices_ba(matA_E2E, nghost, E_n->boxArray(), dm);
       
       // const IntVect& sym_dir = AMReXConst::btype_ex;
       
@@ -552,16 +486,24 @@ int main(int argc, char* argv[]) {
          if (step % save_steps == 0) {
             saveState(step, time, EM_state, pContainer_list, pop_list, geom, datalog);
          }
-
+         
          // Advance particle positions
          particlePusher_all(pContainer_list, dt);
-
+         
+         // Calculate rotated current jHat
          jHat.setVal(0.0);
-         compute_jHat_all(jHat, dt*theta, *B_f[0], *B_f[1], *B_f[2], pContainer_list, pop_list, dx);
+         // compute_jHat_all(jHat, dt, theta, *B_f[0], *B_f[1], *B_f[2], pContainer_list, pop_list, dV_inv);
+         compute_jHat_pr_all(jHat, dt, theta, *B_f[0], *B_f[1], *B_f[2], *E_n, pContainer_list, pop_list, dV_inv);
          
-         // gmres_step(EM_state, dx, dt, theta, rtol, atol, verbosity);
+         // Compute mass matrices
+         // for (MFIter mfi(matA_E2E); mfi.isValid(); ++mfi) {
+         //    matA_E2E[mfi].setVal(0.0);
+         // }
+         // fillMassMatrices_all(matA_E2E, nghost, dt, *B_f[0], *B_f[1], *B_f[2], pContainer_list, pop_list, dV_inv);
          
-         gmres_step_matrix(EM_state, matA_B2E, matA_E2B, matA_E2E, dx, dt, theta, rtol, atol, verbosity);
+         gmres_step(EM_state, jHat, pContainer_list, pop_list, dV_inv, dx, dt, theta, rtol, atol, verbosity, max_gmres);
+         
+         // gmres_step(EM_state, matA_B2E, matA_E2B, matA_E2E, dx, dt, theta, rtol, atol, verbosity, max_gmres);
          
          // Print() << "E_n: " << sym_test(*E_n,sym_dir) << std::endl
          //         << "B_fx: " << sym_test(*B_f[0],sym_dir) << std::endl

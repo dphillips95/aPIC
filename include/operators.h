@@ -304,6 +304,15 @@ inline int get_cellID(amrex::IntVect cell_indices, const amrex::IntVect& len, in
    return get_cellID(cell_indices[0], cell_indices[1], cell_indices[2], len);
 }
 
+template <size_t num>
+inline std::array<int,num> get_cellID(const std::array<amrex::IntVect,num>& cell_indices, const amrex::IntVect& len, int nghost = 0) {
+   std::array<int,num> ret;
+   for (size_t ii=0; ii<num; ++ii) {
+      ret[ii] = get_cellID(cell_indices[0], len, nghost);
+   }
+   return ret;
+}
+
 // Get cell indices from given cellID
 inline amrex::IntVect get_cell_indices(int cellID, const amrex::IntVect& len, int nghost = 0) {
    int

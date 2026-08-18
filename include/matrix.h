@@ -30,6 +30,11 @@ Author(s): David Phillips
 #include <span>
 #include <assert.h>
 
+// Check if row and col indices are in the correct ordering for insertion
+// i.e. first by row, then by col
+// This method does not sort, and is intended only for debugging
+bool test_order(const std::vector<int>& row_indices, const std::vector<int>& col_indices);
+
 // Non-sparse Matrix class; dimensions are defined at run time but are fixed
 template <typename T>
 class matrix {
@@ -48,6 +53,11 @@ public:
 
    // matrix(matrix<T>&&) = default;
    // matrix<T>& operator=(matrix<T>&&) = default;
+
+   // Set all data entries to val but keep structure
+   void setVal(const T val) {
+      std::fill(m_dat.begin(), m_dat.end(), val);
+   }
    
    T& operator()(const size_t ii, const size_t jj) {
 #ifdef AMREX_DEBUG
@@ -184,6 +194,11 @@ public:
       m_row_indices.push_back(0);
       m_col_indices.reserve(size_est);
    }
+
+   // Set all data entries to val but keep structure
+   void setVal(const T val) {
+      std::fill(m_dat.begin(), m_dat.end(), val);
+   }
    
    // Add single entry to matrix; entry must have same row as previous and larger column index (unless it is the first entry of the row)
    void add_entry(T dat, size_t col_index) {
@@ -198,10 +213,14 @@ public:
    // End row by adding current last entry data index to m_row_indices
    void end_row() { m_row_indices.push_back(m_nvals); }
 
+   // Main construction method; provide data in COO format - list of data, list of row indices, list of col indices
+   // Input is assumed to be in correct order - first by row, then by col
+   // If order is wrong this WILL fail
    void add_chunk(const std::vector<T>& dat, const std::vector<int>& row_indices, const std::vector<int>& col_indices) {
 #ifdef AMREX_DEBUG
       assert(dat.size() == row_indices.size());
       assert(dat.size() == col_indices.size());
+      assert(test_order(row_indices, col_indices));
 #endif
       this->add_rows(row_indices[0] - m_row_indices.size() + 1);
       this->add_entry(dat[0], col_indices[0]);
@@ -212,6 +231,21 @@ public:
       this->end_row();
    }
 
+   // Add chunk but set all data to given value
+   void add_chunk(const T& val, const std::vector<int>& row_indices, const std::vector<int>& col_indices) {
+#ifdef AMREX_DEBUG
+      assert(row_indices.size() == col_indices.size());
+      assert(test_order(row_indices, col_indices));
+#endif
+      this->add_rows(row_indices[0] - m_row_indices.size() + 1);
+      this->add_entry(val, col_indices[0]);
+      for (size_t ii=1; ii<row_indices.size(); ++ii) {
+         this->add_rows(row_indices[ii] - row_indices[ii-1]);
+         this->add_entry(val, col_indices[ii]);
+      }
+      this->end_row();
+   }
+   
    void add_rows(size_t num_rows) {
 #ifdef AMREX_DEBUG
       assert(m_row_indices.size() + num_rows <= m_nrows + 1);
@@ -220,7 +254,7 @@ public:
          this->end_row();
       }
    }
-
+   
    void add_rows(size_t start, size_t end) {
 #ifdef AMREX_DEBUG
       assert(m_row_indices.size() + end <= m_nrows + 1 + start);
@@ -292,6 +326,13 @@ public:
    }
    
    void mmult_add(std::span<T> ret, const std::span<const T> x, T a) const { mmult_add(ret, *this, x, a); }
+
+   // Scale entire matrix by given factor
+   void scale(const T fact) {
+      for (size_t ii=0; ii<m_dat.size(); ++ii) {
+         m_dat[ii] *= fact;
+      }
+   }
 };
 
 #endif
