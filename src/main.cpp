@@ -248,15 +248,27 @@ int main(int argc, char* argv[]) {
       DistributionMapping dm(ba_c);
 
       // Vector containing B_f and E_n states
-      BE EM_state(ba_n, dm, nghost, geom.periodicity());
+      BE
+         EM_state(ba_n, dm, nghost, geom.periodicity()),
+         // Mid state; used for particle acceleration, no need for ghost cells
+         // (Unless particle cloud is larger than one cell length)
+         EM_state_mid(ba_n, dm, 0, geom.periodicity());
       
       MultiFab* E_n = &EM_state.getE_n();
+      MultiFab* E_n_mid = &EM_state_mid.getE_n();
+      
       std::array<MultiFab*,3> B_f = {
          &EM_state.getB_fx(),
          &EM_state.getB_fy(),
          &EM_state.getB_fz()
       };
-
+      
+      std::array<MultiFab*,3> B_f_mid = {
+         &EM_state_mid.getB_fx(),
+         &EM_state_mid.getB_fy(),
+         &EM_state_mid.getB_fz()
+      };
+      
       // Vector of particle containers
       std::vector<myPContainer> pContainer_list;
       pContainer_list.reserve(pop_count);
@@ -495,6 +507,9 @@ int main(int argc, char* argv[]) {
       
       for (int step=0; step<steps; ++step) {
          Print()  << std::endl << "Step: " << step << std::endl;
+
+         // Copy previous state into mid-state
+         BE::Copy(EM_state_mid, EM_state, 0);
          
          if (step % save_steps == 0) {
             saveState(step, time, EM_state, pContainer_list, pop_list, geom, datalog);
@@ -543,12 +558,18 @@ int main(int argc, char* argv[]) {
          for (int nn=0; nn<3; ++nn) {
             B_f[nn]->OverrideSync(geom.periodicity());
          }
+
+         // Combine previous E with new E to create mid-step E for particle accelerator
+         EM_state_mid.mult_En(1 - theta);
+         BE::Saxpy_En(EM_state_mid, EM_state.getE_n_const(), 0, theta);
+         
+         particleAccelerator_all(pContainer_list, pop_list, *B_f_mid[0], *B_f_mid[1], *B_f_mid[2], *E_n_mid, dt, theta);
          
          time += dt;
       }
       saveState(steps, time, EM_state, pContainer_list, pop_list, geom, datalog);
    }
-
+      
    BL_PROFILE_VAR_STOP(pmain);
    Finalize();
 }

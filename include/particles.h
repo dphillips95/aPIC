@@ -107,6 +107,15 @@ inline void particlePusher_all(std::vector<myPContainer>& pContainer_list, const
    }
 }
 
+void particleAccelerator(myPContainer& pContainer, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const amrex::MultiFab& E_n, const amrex::Real theta, const amrex::Real beta);
+
+inline void particleAccelerator_all(std::vector<myPContainer>& pContainer_list, const std::vector<Population>& pop_list, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const amrex::MultiFab& E_n, const amrex::Real dt, const amrex::Real theta) {
+   for (size_t nn=0; nn<pContainer_list.size(); ++nn) {
+      amrex::Real beta = dt*theta*pop_list[nn].charge/pop_list[nn].mass;
+      particleAccelerator(pContainer_list[nn], B_fx, B_fy, B_fz, E_n, theta, beta);
+   }
+}
+
 void compute_jHat(amrex::MultiFab& jHat, const amrex::Real beta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const myPContainer& pContainer, amrex::Real factor);
 
 // Add contributions to jHat from all populations

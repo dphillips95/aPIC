@@ -212,6 +212,32 @@ public:
       BE::Saxpy_En(lhs, rhs.m_E_n, a);
    }
 
+   static void Saxpy_Bfx(BE& lhs, const amrex::MultiFab& rhs_Bfx, int nghost, amrex::Real a = 1) {
+      amrex::MultiFab::Saxpy(lhs.m_B_fx, a, rhs_Bfx, 0, 0, 1, nghost);
+   }
+   static void Saxpy_Bfy(BE& lhs, const amrex::MultiFab& rhs_Bfy, int nghost, amrex::Real a = 1) {
+      amrex::MultiFab::Saxpy(lhs.m_B_fy, a, rhs_Bfy, 0, 0, 1, nghost);
+   }
+   static void Saxpy_Bfz(BE& lhs, const amrex::MultiFab& rhs_Bfz, int nghost, amrex::Real a = 1) {
+      amrex::MultiFab::Saxpy(lhs.m_B_fz, a, rhs_Bfz, 0, 0, 1, nghost);
+   }
+   static void Saxpy_En(BE& lhs, const amrex::MultiFab& rhs_En, int nghost, amrex::Real a = 1) {
+      amrex::MultiFab::Saxpy(lhs.m_E_n, a, rhs_En, 0, 0, 3, nghost);
+   }
+   // Add all B fields at once
+   static void Saxpy_B(BE& lhs, const std::array<amrex::MultiFab,3>& B_f, int nghost, amrex::Real a = 1) {
+      BE::Saxpy_Bfx(lhs, B_f[0], nghost, a);
+      BE::Saxpy_Bfy(lhs, B_f[1], nghost, a);
+      BE::Saxpy_Bfz(lhs, B_f[2], nghost, a);
+   }
+   
+   static void Saxpy(BE& lhs, const BE& rhs, int nghost, amrex::Real a = 1) {
+      BE::Saxpy_Bfx(lhs, rhs.m_B_fx, nghost, a);
+      BE::Saxpy_Bfy(lhs, rhs.m_B_fy, nghost, a);
+      BE::Saxpy_Bfz(lhs, rhs.m_B_fz, nghost, a);
+      BE::Saxpy_En(lhs, rhs.m_E_n, nghost, a);
+   }
+
    static void linComb_Bfx(BE& lhs, amrex::Real a, const amrex::MultiFab& rhs_a_Bfx, amrex::Real b, const amrex::MultiFab& rhs_b_Bfx) {
       amrex::MultiFab::LinComb(lhs.m_B_fx, a, rhs_a_Bfx, 0, b, rhs_b_Bfx, 0, 0, 1, rhs_a_Bfx.nGrow());
    }
@@ -236,11 +262,27 @@ public:
       return std::sqrt(this->dotProduct((*this),(*this)));
    }
 
-   void mult(amrex::Real fac) {
+   void mult_Bfx(amrex::Real fac) {
       m_B_fx.mult(fac);
+   }
+   void mult_Bfy(amrex::Real fac) {
       m_B_fy.mult(fac);
+   }
+   void mult_Bfz(amrex::Real fac) {
       m_B_fz.mult(fac);
+   }
+   void mult_En(amrex::Real fac) {
       m_E_n.mult(fac);
+   }
+   void mult_Bf(amrex::Real fac) {
+      this->mult_Bfx(fac);
+      this->mult_Bfy(fac);
+      this->mult_Bfz(fac);
+   }
+   
+   void mult(amrex::Real fac) {
+      this->mult_Bf(fac);
+      this->mult_En(fac);
    }
    
    void setVal(amrex::Real val) {

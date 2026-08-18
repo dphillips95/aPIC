@@ -95,7 +95,7 @@ void fill_particles_cell(myPTile& parts, const size_t count, const Real vth, con
 void particlePusher(myPContainer& pContainer, const Real dt) {
    constexpr int lev = 0;
    
-   for (myPIter pti(pContainer, lev); pti.isValid(); ++pti) {
+   for (myPIter pti(pContainer,lev); pti.isValid(); ++pti) {
       myAoS& particles = pti.GetArrayOfStructs();
 
       for (myPType& p : particles) {
@@ -108,6 +108,56 @@ void particlePusher(myPContainer& pContainer, const Real dt) {
    pContainer.Redistribute();
 }
 
+// Accelerate particles by Lorentz force, according to ECSIM method
+void particleAccelerator(myPContainer& pContainer, const MultiFab& B_fx, const MultiFab& B_fy, const MultiFab& B_fz, const MultiFab& E_n, const Real theta, const Real beta) {
+   constexpr int lev = 0;
+   
+   const GpuArray<Real,3>&
+      dom_min = pContainer.Geom(lev).ProbLoArray(),
+      dx = pContainer.Geom(lev).CellSizeArray();
+   
+   for (myPIter pti(pContainer,lev); pti.isValid(); ++pti) {
+      myAoS& particles = pti.GetArrayOfStructs();
+      
+      const Array4<const Real>& B_fx_array = B_fx.const_array(pti);
+      const Array4<const Real>& B_fy_array = B_fy.const_array(pti);
+      const Array4<const Real>& B_fz_array = B_fz.const_array(pti);
+      const Array4<const Real>& E_n_array = E_n.const_array(pti);
+      
+      for (myPType& p : particles) {
+         const IntVect cell_indices = get_pos_indices(p.pos(0), p.pos(1), p.pos(2), dx, dom_min);
+         
+         std::array<Real,3> B_p = face2r(B_fx_array, B_fy_array, B_fz_array, p.pos(0), p.pos(1), p.pos(2), cell_indices, dx, dom_min);
+         for (Real& val : B_p) {
+            // Rescale magnetic field by beta = dt*theta*q_p/m_p
+            val *= beta;
+         }
+         const std::array<Real,3> E_p = node2r_vector(E_n_array, p.pos(0), p.pos(1), p.pos(2), cell_indices, dx, dom_min);
+         
+         const matrix<Real> alpha = compute_alpha(B_p);
+         
+         const Real
+            vx_acc = p.rdata(pExtra_real_ind::vx_i) + beta*E_p[0],
+            vy_acc = p.rdata(pExtra_real_ind::vy_i) + beta*E_p[1],
+            vz_acc = p.rdata(pExtra_real_ind::vz_i) + beta*E_p[2];
+         
+         const std::array<Real,3> alpha_v = {
+            alpha(0,0)*vx_acc + alpha(0,1)*vy_acc + alpha(0,2)*vz_acc,
+            alpha(1,0)*vx_acc + alpha(1,1)*vy_acc + alpha(1,2)*vz_acc,
+            alpha(2,0)*vx_acc + alpha(2,1)*vy_acc + alpha(2,2)*vz_acc
+         };
+         
+         p.rdata(pExtra_real_ind::vx_i) *= 1 - 1/theta;
+         p.rdata(pExtra_real_ind::vy_i) *= 1 - 1/theta;
+         p.rdata(pExtra_real_ind::vz_i) *= 1 - 1/theta;
+         
+         p.rdata(pExtra_real_ind::vx_i) += alpha_v[0]/theta;
+         p.rdata(pExtra_real_ind::vy_i) += alpha_v[1]/theta;
+         p.rdata(pExtra_real_ind::vz_i) += alpha_v[2]/theta;
+      }
+   }
+}
+
 // Computes the rotated current jHat (current due to initial velocity, rotated by magnetic field) for a single population
 void compute_jHat(MultiFab& jHat, const Real beta, const MultiFab& B_fx, const MultiFab& B_fy, const MultiFab& B_fz, const myPContainer& pContainer, const Real factor) {
    constexpr int lev = 0;
@@ -116,7 +166,7 @@ void compute_jHat(MultiFab& jHat, const Real beta, const MultiFab& B_fx, const M
       dom_min = pContainer.Geom(lev).ProbLoArray(),
       dx = pContainer.Geom(lev).CellSizeArray();
    
-   for (myPIterConst pti(pContainer, lev); pti.isValid(); ++pti) {
+   for (myPIterConst pti(pContainer,lev); pti.isValid(); ++pti) {
       const myAoS& particles = pti.GetArrayOfStructs();
       
       const Array4<Real>& jHat_array = jHat.array(pti);
@@ -167,7 +217,7 @@ void compute_jHat_pr(MultiFab& jHat_pr, const Real beta, const Real theta, const
       dom_min = pContainer.Geom(lev).ProbLoArray(),
       dx = pContainer.Geom(lev).CellSizeArray();
    
-   for (myPIterConst pti(pContainer, lev); pti.isValid(); ++pti) {
+   for (myPIterConst pti(pContainer,lev); pti.isValid(); ++pti) {
       const myAoS& particles = pti.GetArrayOfStructs();
       
       const Array4<Real>& jHat_pr_array = jHat_pr.array(pti);
@@ -225,7 +275,7 @@ void compute_jHat_en(MultiFab& jHat_re, const Real beta, const Real theta, const
       dom_min = pContainer.Geom(lev).ProbLoArray(),
       dx = pContainer.Geom(lev).CellSizeArray();
    
-   for (myPIterConst pti(pContainer, lev); pti.isValid(); ++pti) {
+   for (myPIterConst pti(pContainer,lev); pti.isValid(); ++pti) {
       const myAoS& particles = pti.GetArrayOfStructs();
       
       const Array4<Real>& jHat_re_array = jHat_re.array(pti);
@@ -286,7 +336,7 @@ void accumulateDensityCurrentKE(MultiFab& density, MultiFab& current, MultiFab& 
       dom_min = pContainer.Geom(lev).ProbLoArray(),
       dx = pContainer.Geom(lev).CellSizeArray();
    
-   for (myPIterConst pti(pContainer, lev); pti.isValid(); ++pti) {
+   for (myPIterConst pti(pContainer,lev); pti.isValid(); ++pti) {
       const Array4<Real>& density_array = density.array(pti);
       const Array4<Real>& current_array = current.array(pti);
       const Array4<Real>& KE_Energy_array = KE_Energy.array(pti);
@@ -315,7 +365,7 @@ void accumulateTemperature(MultiFab& temperature, const MultiFab& velocity, cons
       dom_min = pContainer.Geom(lev).ProbLoArray(),
       dx = pContainer.Geom(lev).CellSizeArray();
    
-   for (myPIterConst pti(pContainer, lev); pti.isValid(); ++pti) {
+   for (myPIterConst pti(pContainer,lev); pti.isValid(); ++pti) {
       const Array4<Real>& temperature_array = temperature.array(pti);
       const Array4<const Real>& velocity_array = velocity.const_array(pti);
       
@@ -351,7 +401,7 @@ void fillMassMatrices(LayoutData<matrix<Real>>& mat_mass, const int nghost, cons
       dom_min = pContainer.Geom(lev).ProbLoArray(),
       dx = pContainer.Geom(lev).CellSizeArray();
 
-   for (myPIterConst pti(pContainer, lev); pti.isValid(); ++pti) {
+   for (myPIterConst pti(pContainer,lev); pti.isValid(); ++pti) {
       const Box&
          bx_n = pti.tilebox(AMReXConst::btype_n),
          bx_n_ghost = grow(bx_n, nghost);
