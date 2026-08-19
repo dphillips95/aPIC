@@ -169,4 +169,23 @@ inline void fillMassMatrices_all(amrex::LayoutData<T>& mat_mass, const int nghos
 void constructEmptyMassMatrices_ba(amrex::LayoutData<matrix<amrex::Real>>& mat_mass, const int nghost, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm);
 void constructEmptyMassMatrices_ba(amrex::LayoutData<sp_matrix<amrex::Real>>& mat_mass, const int nghost, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm);
 
+inline amrex::Real max_spd(const myPContainer& pContainer) {
+   constexpr int lev = 0;
+   
+   amrex::Real max_spd = 0.0;
+   for (myPIterConst pti(pContainer,lev); pti.isValid(); ++pti) {
+      const myAoS& particles = pti.GetArrayOfStructs();
+      
+      for (const myPType& p : particles) {
+         amrex::Real spd = std::sqrt(
+                                     math::square(p.rdata(pExtra_real_ind::vx_i)) + 
+                                     math::square(p.rdata(pExtra_real_ind::vy_i)) + 
+                                     math::square(p.rdata(pExtra_real_ind::vz_i)));
+         max_spd = std::max(max_spd, spd);
+      }
+   }
+   
+   return max_spd;
+}
+
 #endif

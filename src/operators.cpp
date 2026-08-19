@@ -165,8 +165,8 @@ std::array<Real,3> face2r(const Array4<const Real>& xface_array, const Array4<co
    std::array<Real,3> ret = {0,0,0};
    for (int nn=0; nn<2; ++nn) {
       ret[0] += xface_array(cell_indices[0]+nn, cell_indices[1], cell_indices[2])*x_weight[nn];
-      ret[0] += yface_array(cell_indices[0], cell_indices[1]+nn, cell_indices[2])*y_weight[nn];
-      ret[0] += zface_array(cell_indices[0], cell_indices[1], cell_indices[2]+nn)*z_weight[nn];
+      ret[1] += yface_array(cell_indices[0], cell_indices[1]+nn, cell_indices[2])*y_weight[nn];
+      ret[2] += zface_array(cell_indices[0], cell_indices[1], cell_indices[2]+nn)*z_weight[nn];
    }
    
    return ret;
