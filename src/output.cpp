@@ -31,6 +31,8 @@ Author(s): David Phillips
 #include <AMReX_MultiFab.H>
 #include <AMReX_PlotFileUtil.H>
 
+#include <AMReX_Print.H>
+
 #include <vector>
 
 using namespace amrex;
@@ -82,7 +84,7 @@ void saveState(int step, Real time, const BE& EM_state, std::vector<myPContainer
    total_Energy_c.setVal(0.0);
    
    static std::vector<MultiFab> rho_c, Jp_c, vp_c, temp_c, KEp_Energy_c;
-
+   
    for (int pp=0; pp<pop_count; ++pp) {
       if (save_count == 0) {
          rho_c.emplace_back(MultiFab(ba_c, dm, 1, nghost));
@@ -140,27 +142,12 @@ void saveState(int step, Real time, const BE& EM_state, std::vector<myPContainer
    MultiFab::LinComb(total_Energy_c, 1, KE_Energy_c, 0, 1, EM_Energy_c, 0, 0, 1, nghost);
             
    Real
-      total_B_energy = 0.0,
-      total_E_energy = 0.0,
-      total_EM_energy = 0.0,
-      total_KE_energy = 0.0,
-      total_energy = 0.0;
-
-   for (MFIter mfi(EM_Energy_c); mfi.isValid(); ++mfi) {
-      const Box& bx_c = mfi.tilebox(AMReXConst::btype_c);
-      const Array4<Real>& EM_Energy_c_array = EM_Energy_c.array(mfi);
-      const Array4<Real>& KE_Energy_c_array = KE_Energy_c.array(mfi);
-
-      ParallelFor(bx_c, [&](int ii, int jj, int kk) {
-         total_B_energy += EM_Energy_c_array(ii,jj,kk,0);
-         total_E_energy += EM_Energy_c_array(ii,jj,kk,1);
-         total_EM_energy += EM_Energy_c_array(ii,jj,kk,2);
-         total_KE_energy += KE_Energy_c_array(ii,jj,kk);
-      });
-   }
-
-   total_energy = total_EM_energy + total_KE_energy;
-            
+      total_B_energy = compute_B_energy_total(*B_f[0], *B_f[1], *B_f[2], geom.periodicity()),
+      total_E_energy = compute_E_energy_total(*E_n, geom.periodicity()),
+      total_EM_energy = total_B_energy + total_E_energy,
+      total_KE_energy = KE_Energy_c.sum(0),
+      total_energy = total_EM_energy + total_KE_energy;
+   
    datalog << std::setw(Log::stepWidth) << step
            << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_B_energy
            << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_E_energy
@@ -168,11 +155,26 @@ void saveState(int step, Real time, const BE& EM_state, std::vector<myPContainer
            << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_KE_energy
            << std::setw(Log::datWidth) << std::setprecision(Log::datPrecision) << total_energy << std::endl;
 
+   for (size_t nn=0; nn<pContainer_list.size(); ++nn) {
+      Print() << pop_list[nn].name << " count: " << pContainer_list[nn].TotalNumberOfParticles() << std::endl;
+      Print() << pop_list[nn].name << " max speed: " << max_spd(pContainer_list[nn]) << std::endl;
+   }
+   
+   Print() << "B_x range: " << B_f[0]->min(0) << " - " << B_f[0]->max(0) << std::endl;
+   Print() << "B_y range: " << B_f[1]->min(0) << " - " << B_f[1]->max(0) << std::endl;
+   Print() << "B_z range: " << B_f[2]->min(0) << " - " << B_f[2]->max(0) << std::endl;
+   Print() << "E_x range: " << E_n->min(0) << " - " << E_n->max(0) << std::endl;
+   Print() << "E_y range: " << E_n->min(1) << " - " << E_n->max(1) << std::endl;
+   Print() << "E_z range: " << E_n->min(2) << " - " << E_n->max(2) << std::endl;
+   Print() << "j_x range: " << J_c.min(0) << " - " << J_c.max(0) << std::endl;
+   Print() << "j_y range: " << J_c.min(1) << " - " << J_c.max(1) << std::endl;
+   Print() << "j_z range: " << J_c.min(2) << " - " << J_c.max(2) << std::endl;
+
    plt_Fab.setVal(0.0);
-            
+   
    int comps = 0;
    Vector<std::string> names;
-            
+   
    MultiFab::Copy(plt_Fab, B_c, 0, comps, 3, nghost);
    comps += 3; names.push_back("Bx"); names.push_back("By"); names.push_back("Bz");
    MultiFab::Copy(plt_Fab, E_c, 0, comps, 3, nghost);
@@ -197,7 +199,7 @@ void saveState(int step, Real time, const BE& EM_state, std::vector<myPContainer
    comps += 1; names.push_back("KE_Energy");
    MultiFab::Copy(plt_Fab, total_Energy_c, 0, comps, 1, nghost);
    comps += 1; names.push_back("total_Energy");
-            
+   
    WriteSingleLevelPlotfileHDF5(pltfile, plt_Fab, names, geom, time, step);
    
    ++save_count;

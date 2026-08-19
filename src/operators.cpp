@@ -194,6 +194,50 @@ void compute_EM_energy(MultiFab& Energy_c, const MultiFab& B_c, const MultiFab& 
    }
 }
 
+// Compute total B energy, component boxes need not match index type
+Real compute_B_energy_total(const MultiFab& B_x, const MultiFab& B_y, const MultiFab& B_z, const Periodicity& period) {
+   Real total_B_energy = 0.0;
+   total_B_energy += B_x.norm2(0, period);
+   total_B_energy += B_y.norm2(0, period);
+   total_B_energy += B_z.norm2(0, period);
+   total_B_energy /= 2*PhysConst::mu0;
+
+   return total_B_energy;
+}
+
+// Compute total E energy, component boxes need not match index type
+Real compute_E_energy_total(const MultiFab& E_x, const MultiFab& E_y, const MultiFab& E_z, const Periodicity& period) {
+   Real total_E_energy = 0.0;
+   total_E_energy += E_x.norm2(0, period);
+   total_E_energy += E_y.norm2(0, period);
+   total_E_energy += E_z.norm2(0, period);
+   total_E_energy *= PhysConst::eps0/2;
+
+   return total_E_energy;
+}
+
+// Compute total B energy, single MultiFab (matching index type)
+Real compute_B_energy_total(const MultiFab& B, const Periodicity& period) {
+   Real total_B_energy = 0.0;
+   total_B_energy += B.norm2(0, period);
+   total_B_energy += B.norm2(1, period);
+   total_B_energy += B.norm2(2, period);
+   total_B_energy /= PhysConst::mu0;
+
+   return total_B_energy;
+}
+
+// Compute total E energy,ingle MultiFab (matching index type)
+Real compute_E_energy_total(const MultiFab& E, const Periodicity& period) {
+   Real total_E_energy = 0.0;
+   total_E_energy += E.norm2(0, period);
+   total_E_energy += E.norm2(1, period);
+   total_E_energy += E.norm2(2, period);
+   total_E_energy *= PhysConst::eps0/2;
+
+   return total_E_energy;
+}
+
 // Derivative operators: Curl Edge to Face - Curl is calculated at face centres using edges surrounding face
 void curl_e2f(MultiFab& xface_curl, MultiFab& yface_curl, MultiFab& zface_curl, const MultiFab& xedge_data, const MultiFab& yedge_data, const MultiFab& zedge_data, const GpuArray<Real,3>& dx) {
    for (MFIter mfi(xface_curl); mfi.isValid(); ++mfi) {

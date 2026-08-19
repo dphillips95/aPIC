@@ -63,7 +63,6 @@ int main(int argc, char* argv[]) {
       int max_grid_size = 10;
 
       int seed = 0, dimensions = 3;
-      bool v_1D = false;
       int steps, save_steps = 0;
       Real dt, theta = 0.5, rtol = 1e-15, atol = -1, Vdt_dx_cap = 0.75;
       Real inp_dx = -1, inp_dy = -1, inp_dz = -1;
@@ -87,8 +86,7 @@ int main(int argc, char* argv[]) {
 
          inp_m.query("seed", seed);
          inp_m.query("dimensions", dimensions);
-         inp_m.query("1v", v_1D);
-
+         
          ParmParse inp_s("simulation");
          
          inp_s.get("steps", steps);
@@ -440,10 +438,17 @@ int main(int argc, char* argv[]) {
          });
       }
 
+      std::vector<Real> max_spds;
+      
       // Particles initial condition; fill with uniform distribution
       for (size_t ii=0; ii<pop_count; ++ii) {
          pContainer_list.emplace_back(geom, dm, ba_c);
          uniform_injector(pContainer_list[ii], pop_list[ii]);
+         max_spds.push_back(max_spd(pContainer_list[ii]));
+         if (max_spds[ii] * dt > Vdt_dx_cap * std::min({dx[0],dx[1],dx[2]})) {
+            Print() << "WARNING: Maximum initial particle speed of population "
+                    << pop_list[ii].name << "exceeds minimum dx * Vdt_cap";
+         }
       }
       
       // Boundary conditions
@@ -566,6 +571,7 @@ int main(int argc, char* argv[]) {
          particleAccelerator_all(pContainer_list, pop_list, *B_f_mid[0], *B_f_mid[1], *B_f_mid[2], *E_n_mid, dt, theta);
          
          time += dt;
+
       }
       saveState(steps, time, EM_state, pContainer_list, pop_list, geom, datalog);
    }

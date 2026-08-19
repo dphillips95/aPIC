@@ -352,7 +352,7 @@ void accumulateDensityCurrentKE(MultiFab& density, MultiFab& current, MultiFab& 
          current_array(p_indices[0],p_indices[1],p_indices[2],1) += p.rdata(pExtra_real_ind::vy_i)*p.rdata(pExtra_real_ind::weight_i)*pop.charge;
          current_array(p_indices[0],p_indices[1],p_indices[2],2) += p.rdata(pExtra_real_ind::vz_i)*p.rdata(pExtra_real_ind::weight_i)*pop.charge;
 
-         KE_Energy_array(p_indices[0],p_indices[1],p_indices[2]) += pop.mass*p.rdata(pExtra_real_ind::weight_i)*(math::square(p.rdata(pExtra_real_ind::vx_i)) + math::square(p.rdata(pExtra_real_ind::vy_i)) + math::square(p.rdata(pExtra_real_ind::vz_i)));
+         KE_Energy_array(p_indices[0],p_indices[1],p_indices[2]) += pop.mass*p.rdata(pExtra_real_ind::weight_i)*(math::square(p.rdata(pExtra_real_ind::vx_i)) + math::square(p.rdata(pExtra_real_ind::vy_i)) + math::square(p.rdata(pExtra_real_ind::vz_i)))/2;
       }
    }
 }

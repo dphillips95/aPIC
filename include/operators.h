@@ -150,6 +150,11 @@ inline amrex::MultiFab compute_EM_energy(const amrex::MultiFab& B_c, const amrex
    return Energy_c;
 }
 
+amrex::Real compute_B_energy_total(const amrex::MultiFab& B_x, const amrex::MultiFab& B_y, const amrex::MultiFab& B_z, const amrex::Periodicity& period);
+amrex::Real compute_E_energy_total(const amrex::MultiFab& E_x, const amrex::MultiFab& E_y, const amrex::MultiFab& E_z, const amrex::Periodicity& period);
+amrex::Real compute_B_energy_total(const amrex::MultiFab& B, const amrex::Periodicity& period);
+amrex::Real compute_E_energy_total(const amrex::MultiFab& E, const amrex::Periodicity& period);
+
 // Derivative operators
 void curl_e2f(amrex::MultiFab& xface_curl, amrex::MultiFab& yface_curl, amrex::MultiFab& zface_curl, const amrex::MultiFab& xedge_data, const amrex::MultiFab& yedge_data, const amrex::MultiFab& zedge_data, const amrex::GpuArray<amrex::Real,3>& dx);
 
