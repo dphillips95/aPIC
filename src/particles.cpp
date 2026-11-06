@@ -65,7 +65,7 @@ void uniform_injector(myPContainer& pContainer, const Population& pop) {
          const GpuArray<Real,3> r_max = {
             (ii+1)*dx[0] + dom_min[0],
             (jj+1)*dx[1] + dom_min[1],
-            (kk+1)*dx[2] + dom_min[2]         
+            (kk+1)*dx[2] + dom_min[2],
          };
          
          fill_particles_cell(parts, pop.macro, pop.vth, pop.velocity, weight, r_min, r_max);
@@ -91,8 +91,8 @@ void fill_particles_cell(myPTile& parts, const size_t count, const Real vth, con
    }
 }
 
-// Push particles according to velocity
-void particlePusher(myPContainer& pContainer, const Real dt) {
+// Move particles according to velocity
+void particleMover(myPContainer& pContainer, const Real dt) {
    constexpr int lev = 0;
    
    for (myPIter pti(pContainer,lev); pti.isValid(); ++pti) {
@@ -125,27 +125,28 @@ void particleAccelerator(myPContainer& pContainer, const MultiFab& B_fx, const M
       const Array4<const Real>& E_n_array = E_n.const_array(pti);
       
       for (myPType& p : particles) {
-         const IntVect cell_indices = get_pos_indices(p.pos(0), p.pos(1), p.pos(2), dx, dom_min);
-         
-         std::array<Real,3> B_p = face2r(B_fx_array, B_fy_array, B_fz_array, p.pos(0), p.pos(1), p.pos(2), cell_indices, dx, dom_min);
+         std::array<Real,3> B_p = face2r(B_fx_array, B_fy_array, B_fz_array, p.pos(0), p.pos(1), p.pos(2), dx, dom_min);
          for (Real& val : B_p) {
             // Rescale magnetic field by beta = dt*theta*q_p/m_p
             val *= beta;
          }
-         const std::array<Real,3> E_p = node2r_vector(E_n_array, p.pos(0), p.pos(1), p.pos(2), cell_indices, dx, dom_min);
+         const std::array<Real,3> E_p = node2r<std::array<Real,3>>(E_n_array, p.pos(0), p.pos(1), p.pos(2), dx, dom_min);
          
-         const matrix<Real> alpha = compute_alpha(B_p);
+         // const std::array<Real,9> alpha = compute_alpha_arr(B_p);
+         const matrix<Real,3,3> alpha = compute_alpha(B_p);
          
-         const Real
-            vx_acc = p.rdata(pExtra_real_ind::vx_i) + beta*E_p[0],
-            vy_acc = p.rdata(pExtra_real_ind::vy_i) + beta*E_p[1],
-            vz_acc = p.rdata(pExtra_real_ind::vz_i) + beta*E_p[2];
-         
-         const std::array<Real,3> alpha_v = {
-            alpha(0,0)*vx_acc + alpha(0,1)*vy_acc + alpha(0,2)*vz_acc,
-            alpha(1,0)*vx_acc + alpha(1,1)*vy_acc + alpha(1,2)*vz_acc,
-            alpha(2,0)*vx_acc + alpha(2,1)*vy_acc + alpha(2,2)*vz_acc
+         const std::array<Real,3> v_acc = {
+            p.rdata(pExtra_real_ind::vx_i) + beta*E_p[0],
+            p.rdata(pExtra_real_ind::vy_i) + beta*E_p[1],
+            p.rdata(pExtra_real_ind::vz_i) + beta*E_p[2]
          };
+         
+         // const std::array<Real,3> alpha_v = {
+         //    alpha[0]*vx_acc + alpha[1]*vy_acc + alpha[2]*vz_acc,
+         //    alpha[3]*vx_acc + alpha[4]*vy_acc + alpha[5]*vz_acc,
+         //    alpha[6]*vx_acc + alpha[7]*vy_acc + alpha[8]*vz_acc
+         // };
+         const std::array<Real,3> alpha_v = alpha.mmult(v_acc);
          
          p.rdata(pExtra_real_ind::vx_i) *= 1 - 1/theta;
          p.rdata(pExtra_real_ind::vy_i) *= 1 - 1/theta;
@@ -175,12 +176,16 @@ void compute_jHat(MultiFab& jHat, const Real beta, const MultiFab& B_fx, const M
       const Array4<const Real>& B_fz_array = B_fz.const_array(pti);
       
       for (const myPType& p : particles) {
-         const IntVect cell_indices = get_pos_indices(p.pos(0), p.pos(1), p.pos(2), dx, dom_min);
+         const IntVect cell_indices = {
+            get_pos_index(p.pos(0), dx[0], dom_min[0], 1),
+            get_pos_index(p.pos(1), dx[1], dom_min[1], 1),
+            get_pos_index(p.pos(2), dx[2], dom_min[2], 1)
+         };
          
          const std::array<Real,2>
-            x_weight = CIC_weights_1D(p.pos(0), dx[0], cell_indices[0], dom_min[0]),
-            y_weight = CIC_weights_1D(p.pos(1), dx[1], cell_indices[1], dom_min[1]),
-            z_weight = CIC_weights_1D(p.pos(2), dx[2], cell_indices[2], dom_min[2]);
+            x_weight = CIC_weights_1D(p.pos(0), dx[0], cell_indices[0], dom_min[0], 1),
+            y_weight = CIC_weights_1D(p.pos(1), dx[1], cell_indices[1], dom_min[1], 1),
+            z_weight = CIC_weights_1D(p.pos(2), dx[2], cell_indices[2], dom_min[2], 1);
          
          std::array<Real,3> B_p = face2r(B_fx_array, B_fy_array, B_fz_array, p.pos(0), p.pos(1), p.pos(2), cell_indices, dx, dom_min);
          for (Real& val : B_p) {
@@ -188,13 +193,22 @@ void compute_jHat(MultiFab& jHat, const Real beta, const MultiFab& B_fx, const M
             val *= beta;
          }
 
-         const matrix<Real> alpha = compute_alpha(B_p);
-
-         const std::array<Real,3> alpha_n = {
-            alpha(0,0)*p.rdata(pExtra_real_ind::vx_i) + alpha(0,1)*p.rdata(pExtra_real_ind::vy_i) + alpha(0,2)*p.rdata(pExtra_real_ind::vz_i),
-            alpha(1,0)*p.rdata(pExtra_real_ind::vx_i) + alpha(1,1)*p.rdata(pExtra_real_ind::vy_i) + alpha(1,2)*p.rdata(pExtra_real_ind::vz_i),
-            alpha(2,0)*p.rdata(pExtra_real_ind::vx_i) + alpha(2,1)*p.rdata(pExtra_real_ind::vy_i) + alpha(2,2)*p.rdata(pExtra_real_ind::vz_i)
+         const std::array<Real,3> v_i = {
+            p.rdata(pExtra_real_ind::vx_i),
+            p.rdata(pExtra_real_ind::vy_i),
+            p.rdata(pExtra_real_ind::vz_i)
          };
+         
+         // const std::array<Real,9> alpha = compute_alpha(B_p);
+         const matrix<Real,3,3> alpha = compute_alpha(B_p);
+
+         // const std::array<Real,3> alpha_n = {
+         //    alpha[0]*p.rdata(pExtra_real_ind::vx_i) + alpha[1]*p.rdata(pExtra_real_ind::vy_i) + alpha[2]*p.rdata(pExtra_real_ind::vz_i),
+         //    alpha[3]*p.rdata(pExtra_real_ind::vx_i) + alpha[4]*p.rdata(pExtra_real_ind::vy_i) + alpha[5]*p.rdata(pExtra_real_ind::vz_i),
+         //    alpha[6]*p.rdata(pExtra_real_ind::vx_i) + alpha[7]*p.rdata(pExtra_real_ind::vy_i) + alpha[8]*p.rdata(pExtra_real_ind::vz_i)
+         // };
+
+         const std::array<Real,3> alpha_n = alpha.mmult(v_i);
 
          for (int ii=0; ii<2; ++ii) {
             for (int jj=0; jj<2; ++jj) {
@@ -209,8 +223,8 @@ void compute_jHat(MultiFab& jHat, const Real beta, const MultiFab& B_fx, const M
    }
 }
 
-// Computes the rotated current jHat_pr (current due to initial velocity and initial electric field, rotated by magnetic field) for a single population
-void compute_jHat_pr(MultiFab& jHat_pr, const Real beta, const Real theta, const MultiFab& B_fx, const MultiFab& B_fy, const MultiFab& B_fz, const MultiFab& E_n, const myPContainer& pContainer, const Real factor) {
+// Computes the rotated current jHat_star (current due to both initial velocity (jHat) and initial electric field (jDag), rotated by magnetic field) for a single population
+void compute_jHat_star(MultiFab& jHat_star, const Real beta, const Real theta, const MultiFab& B_fx, const MultiFab& B_fy, const MultiFab& B_fz, const MultiFab& E_n, const myPContainer& pContainer, const Real factor) {
    constexpr int lev = 0;
 
    const GpuArray<Real,3>&
@@ -220,45 +234,54 @@ void compute_jHat_pr(MultiFab& jHat_pr, const Real beta, const Real theta, const
    for (myPIterConst pti(pContainer,lev); pti.isValid(); ++pti) {
       const myAoS& particles = pti.GetArrayOfStructs();
       
-      const Array4<Real>& jHat_pr_array = jHat_pr.array(pti);
+      const Array4<Real>& jHat_star_array = jHat_star.array(pti);
       const Array4<const Real>& B_fx_array = B_fx.const_array(pti);
       const Array4<const Real>& B_fy_array = B_fy.const_array(pti);
       const Array4<const Real>& B_fz_array = B_fz.const_array(pti);
       const Array4<const Real>& E_n_array = E_n.const_array(pti);
       
       for (const myPType& p : particles) {
-         const IntVect cell_indices = get_pos_indices(p.pos(0), p.pos(1), p.pos(2), dx, dom_min);
-         
-         const std::array<Real,2>
-            x_weight = CIC_weights_1D(p.pos(0), dx[0], cell_indices[0], dom_min[0]),
-            y_weight = CIC_weights_1D(p.pos(1), dx[1], cell_indices[1], dom_min[1]),
-            z_weight = CIC_weights_1D(p.pos(2), dx[2], cell_indices[2], dom_min[2]);
+         const IntVect cell_indices = {
+            get_pos_index(p.pos(0), dx[0], dom_min[0], 1),
+            get_pos_index(p.pos(1), dx[1], dom_min[1], 1),
+            get_pos_index(p.pos(2), dx[2], dom_min[2], 1)
+         };
+
+         const std::array<std::array<Real,2>,3> weights = {
+            CIC_weights_1D(p.pos(0), dx[0], cell_indices[0], dom_min[0], 1),
+            CIC_weights_1D(p.pos(1), dx[1], cell_indices[1], dom_min[1], 1),
+            CIC_weights_1D(p.pos(2), dx[2], cell_indices[2], dom_min[2], 1)
+         };
          
          std::array<Real,3> B_p = face2r(B_fx_array, B_fy_array, B_fz_array, p.pos(0), p.pos(1), p.pos(2), cell_indices, dx, dom_min);
          for (Real& val : B_p) {
             // Rescale magnetic field by beta = dt*theta*q_p/m_p
             val *= beta;
          }
-         const std::array<Real,3> E_p = node2r_vector(E_n_array, p.pos(0), p.pos(1), p.pos(2), cell_indices, dx, dom_min);
-
-         const matrix<Real> alpha = compute_alpha(B_p);
-
-         const Real
-            vx_pr = p.rdata(pExtra_real_ind::vx_i) + (1-theta)*beta*E_p[0],
-            vy_pr = p.rdata(pExtra_real_ind::vy_i) + (1-theta)*beta*E_p[1],
-            vz_pr = p.rdata(pExtra_real_ind::vz_i) + (1-theta)*beta*E_p[2];
+         const std::array<Real,3> E_p = node2r<std::array<Real,3>>(E_n_array, p.pos(0), p.pos(1), p.pos(2), cell_indices, dx, dom_min);
          
-         const std::array<Real,3> alpha_v = {
-            alpha(0,0)*vx_pr + alpha(0,1)*vy_pr + alpha(0,2)*vz_pr,
-            alpha(1,0)*vx_pr + alpha(1,1)*vy_pr + alpha(1,2)*vz_pr,
-            alpha(2,0)*vx_pr + alpha(2,1)*vy_pr + alpha(2,2)*vz_pr
+         // const std::array<Real,9> alpha = compute_alpha(B_p);
+         const matrix<Real,3,3> alpha = compute_alpha(B_p);
+         
+         const std::array<Real,3> v_star = {
+            p.rdata(pExtra_real_ind::vx_i) + (1-theta)*beta*E_p[0],
+            p.rdata(pExtra_real_ind::vy_i) + (1-theta)*beta*E_p[1],
+            p.rdata(pExtra_real_ind::vz_i) + (1-theta)*beta*E_p[2]
          };
+         
+         // const std::array<Real,3> alpha_v = {
+         //    alpha[0]*vx_star + alpha[1]*vy_star + alpha[2]*vz_star,
+         //    alpha[3]*vx_star + alpha[4]*vy_star + alpha[5]*vz_star,
+         //    alpha[6]*vx_star + alpha[7]*vy_star + alpha[8]*vz_star
+         // };
+         
+         const std::array<Real,3> alpha_v = alpha.mmult(v_star);
 
          for (int ii=0; ii<2; ++ii) {
             for (int jj=0; jj<2; ++jj) {
                for (int kk=0; kk<2; ++kk) {
                   for (int nn=0; nn<3; ++nn) {
-                     jHat_pr_array(cell_indices[0]+ii, cell_indices[1]+jj, cell_indices[2]+kk, nn) += factor*p.rdata(pExtra_real_ind::weight_i)*x_weight[ii]*y_weight[jj]*z_weight[kk]*alpha_v[nn];
+                     jHat_star_array(cell_indices[0]+ii, cell_indices[1]+jj, cell_indices[2]+kk, nn) += factor*p.rdata(pExtra_real_ind::weight_i)*weights[0][ii]*weights[1][jj]*weights[2][kk]*alpha_v[nn];
                   }
                }
             }
@@ -267,56 +290,67 @@ void compute_jHat_pr(MultiFab& jHat_pr, const Real beta, const Real theta, const
    }
 }
 
-// Computes the rotated current jHat_re (current due to resultan electric field, rotated by magnetic field) for a single population
-void compute_jHat_en(MultiFab& jHat_re, const Real beta, const Real theta, const MultiFab& B_fx, const MultiFab& B_fy, const MultiFab& B_fz, const MultiFab& E_n, const myPContainer& pContainer, const Real factor) {
+// Computes the rotated current j_E (current due to resultant electric field, rotated by magnetic field) for a single population
+// Theta parameter reduces acceleration time by given factor
+void compute_j_E(MultiFab& j_E, const Real beta, const Real theta, const MultiFab& B_fx, const MultiFab& B_fy, const MultiFab& B_fz, const MultiFab& E_n, const myPContainer& pContainer, const Real factor) {
    constexpr int lev = 0;
 
    const GpuArray<Real,3>&
       dom_min = pContainer.Geom(lev).ProbLoArray(),
       dx = pContainer.Geom(lev).CellSizeArray();
+
+   // Print() << "E_n: ";
+   // view_MultiFab(E_n);
    
    for (myPIterConst pti(pContainer,lev); pti.isValid(); ++pti) {
       const myAoS& particles = pti.GetArrayOfStructs();
       
-      const Array4<Real>& jHat_re_array = jHat_re.array(pti);
+      const Array4<Real>& j_E_array = j_E.array(pti);
       const Array4<const Real>& B_fx_array = B_fx.const_array(pti);
       const Array4<const Real>& B_fy_array = B_fy.const_array(pti);
       const Array4<const Real>& B_fz_array = B_fz.const_array(pti);
       const Array4<const Real>& E_n_array = E_n.const_array(pti);
       
       for (const myPType& p : particles) {
-         const IntVect cell_indices = get_pos_indices(p.pos(0), p.pos(1), p.pos(2), dx, dom_min);
+         const IntVect cell_indices = {
+            get_pos_index(p.pos(0), dx[0], dom_min[0], 1),
+            get_pos_index(p.pos(1), dx[1], dom_min[1], 1),
+            get_pos_index(p.pos(2), dx[2], dom_min[2], 1)
+         };
          
          const std::array<Real,2>
-            x_weight = CIC_weights_1D(p.pos(0), dx[0], cell_indices[0], dom_min[0]),
-            y_weight = CIC_weights_1D(p.pos(1), dx[1], cell_indices[1], dom_min[1]),
-            z_weight = CIC_weights_1D(p.pos(2), dx[2], cell_indices[2], dom_min[2]);
+            x_weight = CIC_weights_1D(p.pos(0), dx[0], cell_indices[0], dom_min[0], 1),
+            y_weight = CIC_weights_1D(p.pos(1), dx[1], cell_indices[1], dom_min[1], 1),
+            z_weight = CIC_weights_1D(p.pos(2), dx[2], cell_indices[2], dom_min[2], 1);
          
          std::array<Real,3> B_p = face2r(B_fx_array, B_fy_array, B_fz_array, p.pos(0), p.pos(1), p.pos(2), cell_indices, dx, dom_min);
          for (Real& val : B_p) {
             // Rescale magnetic field by beta = dt*theta*q_p/m_p
             val *= beta;
          }
-         const std::array<Real,3> E_p = node2r_vector(E_n_array, p.pos(0), p.pos(1), p.pos(2), cell_indices, dx, dom_min);
+         const std::array<Real,3> E_p = node2r<std::array<Real,3>>(E_n_array, p.pos(0), p.pos(1), p.pos(2), cell_indices, dx, dom_min);
 
-         const matrix<Real> alpha = compute_alpha(B_p);
+         // const std::array<Real,9> alpha = compute_alpha(B_p);
+         const matrix<Real,3,3> alpha = compute_alpha(B_p);
 
-         const Real
-            vx_re = theta*beta*E_p[0],
-            vy_re = theta*beta*E_p[1],
-            vz_re = theta*beta*E_p[2];
-         
-         const std::array<Real,3> alpha_v = {
-            alpha(0,0)*vx_re + alpha(0,1)*vy_re + alpha(0,2)*vz_re,
-            alpha(1,0)*vx_re + alpha(1,1)*vy_re + alpha(1,2)*vz_re,
-            alpha(2,0)*vx_re + alpha(2,1)*vy_re + alpha(2,2)*vz_re
+         const std::array<Real,3> v_E = {
+            beta*E_p[0],
+            beta*E_p[1],
+            beta*E_p[2]
          };
+         
+         // const std::array<Real,3> alpha_v = {
+         //    alpha[0]*vx_E + alpha[1]*vy_E + alpha[2]*vz_E,
+         //    alpha[3]*vx_E + alpha[4]*vy_E + alpha[5]*vz_E,
+         //    alpha[6]*vx_E + alpha[7]*vy_E + alpha[8]*vz_E
+         // };
+         const std::array<Real,3> alpha_v = alpha.mmult(v_E);
          
          for (int ii=0; ii<2; ++ii) {
             for (int jj=0; jj<2; ++jj) {
                for (int kk=0; kk<2; ++kk) {
                   for (int nn=0; nn<3; ++nn) {
-                     jHat_re_array(cell_indices[0]+ii, cell_indices[1]+jj, cell_indices[2]+kk, nn) += factor*p.rdata(pExtra_real_ind::weight_i)*x_weight[ii]*y_weight[jj]*z_weight[kk]*alpha_v[nn];
+                     j_E_array(cell_indices[0]+ii, cell_indices[1]+jj, cell_indices[2]+kk, nn) += factor*p.rdata(pExtra_real_ind::weight_i)*x_weight[ii]*y_weight[jj]*z_weight[kk]*alpha_v[nn];
                   }
                }
             }
@@ -344,7 +378,11 @@ void accumulateDensityCurrentKE(MultiFab& density, MultiFab& current, MultiFab& 
       const myAoS& particles = pti.GetArrayOfStructs();
       
       for (const myPType& p : particles) {
-         const IntVect p_indices = get_pos_indices(p.pos(0), p.pos(1), p.pos(2), dx, dom_min, AMReXConst::btype_c);
+         const IntVect p_indices = {
+            get_pos_index(p.pos(0), dx[0], dom_min[0], 0),
+            get_pos_index(p.pos(1), dx[1], dom_min[1], 0),
+            get_pos_index(p.pos(2), dx[2], dom_min[2], 0)
+         };
          
          density_array(p_indices[0],p_indices[1],p_indices[2]) += p.rdata(pExtra_real_ind::weight_i);
          
@@ -372,8 +410,12 @@ void accumulateTemperature(MultiFab& temperature, const MultiFab& velocity, cons
       const myAoS& particles = pti.GetArrayOfStructs();
       
       for (const myPType& p : particles) {
-         const IntVect p_indices = get_pos_indices(p.pos(0), p.pos(1), p.pos(2), dx, dom_min, AMReXConst::btype_c);
-
+         const IntVect p_indices = {
+            get_pos_index(p.pos(0), dx[0], dom_min[0], 0),
+            get_pos_index(p.pos(1), dx[1], dom_min[1], 0),
+            get_pos_index(p.pos(2), dx[2], dom_min[2], 0)
+         };
+          
          Real v2 = math::square(p.rdata(pExtra_real_ind::vx_i) - velocity_array(p_indices[0],p_indices[1],p_indices[2],0));
          v2 += math::square(p.rdata(pExtra_real_ind::vy_i) - velocity_array(p_indices[0],p_indices[1],p_indices[2],1));
          v2 += math::square(p.rdata(pExtra_real_ind::vz_i) - velocity_array(p_indices[0],p_indices[1],p_indices[2],2));
@@ -421,8 +463,11 @@ void fillMassMatrices(LayoutData<matrix<Real>>& mat_mass, const int nghost, cons
       
       for (const myPType& p : particles) {
          // particle cell index
-         const IntVect
-            cell_indices = get_pos_indices(p.pos(0), p.pos(1), p.pos(2), dx, dom_min) - base_index;
+         const IntVect cell_indices = {
+            get_pos_index(p.pos(0), dx[0], dom_min[0], 1) - base_index[0],
+            get_pos_index(p.pos(1), dx[1], dom_min[1], 1) - base_index[1],
+            get_pos_index(p.pos(2), dx[2], dom_min[2], 1) - base_index[2]
+         };
          // surrounding node indices
          const std::array<IntVect,8> nodes = { 
             cell_indices,
@@ -441,9 +486,9 @@ void fillMassMatrices(LayoutData<matrix<Real>>& mat_mass, const int nghost, cons
             nIDs_col = get_cellID(nodes, len_n_ghost);
 
          const std::array<Real,2>
-            x_weight = CIC_weights_1D(p.pos(0), dx[0], cell_indices[0], dom_min[0]),
-            y_weight = CIC_weights_1D(p.pos(1), dx[1], cell_indices[1], dom_min[1]),
-            z_weight = CIC_weights_1D(p.pos(2), dx[2], cell_indices[2], dom_min[2]);
+            x_weight = CIC_weights_1D(p.pos(0), dx[0], cell_indices[0], dom_min[0], 1),
+            y_weight = CIC_weights_1D(p.pos(1), dx[1], cell_indices[1], dom_min[1], 1),
+            z_weight = CIC_weights_1D(p.pos(2), dx[2], cell_indices[2], dom_min[2], 1);
 
          std::array<Real,3> B_p = face2r(B_fx_array, B_fy_array, B_fz_array, p.pos(0), p.pos(1), p.pos(2), cell_indices, dx, dom_min);
          for (Real& val : B_p) {
@@ -451,29 +496,36 @@ void fillMassMatrices(LayoutData<matrix<Real>>& mat_mass, const int nghost, cons
             val *= beta;
          }
 
-         matrix<Real> alpha = compute_alpha(B_p);
+         // std::array<Real,9> alpha = compute_alpha(B_p);
+         matrix<Real,3,3> alpha = compute_alpha(B_p);
 
          // We need to multiply by particle charge and weight at some point
-         alpha.scale(pop.charge*p.rdata(pExtra_real_ind::weight_i));
+         Real scale_factor = pop.charge*p.rdata(pExtra_real_ind::weight_i);
+         // for (int ii=0; ii<9; ++ii) {
+         //    alpha[ii] *= scale_factor;
+         // }
+         alpha.scale(scale_factor);
 
+         // Final weight should be x_weight[xi]*x_weight[xj]*y_weight[xi]*y_weight[xj]*z_weight[xi]*z_weight[xj]
+         // Instead of repeated products, weight is accumulated progressively up through the loop layers
          for (int xi=0; xi<2; ++xi) {
             const Real x_wi = x_weight[xi];
             for (int xj=0; xj<2; ++xj) {
-               const Real x_wj = x_weight[xj];
+               const Real x_wj = x_wi*x_weight[xj];
                for (int yi=0; yi<2; ++yi) {
-                  const Real y_wi = y_weight[yi];
+                  const Real y_wi = x_wj*y_weight[yi];
                   for (int yj=0; yj<2; ++yj) {
-                     const Real y_wj = y_weight[yj];
+                     const Real y_wj = y_wi*y_weight[yj];
                      for (int zi=0; zi<2; ++zi) {
-                        const Real z_wi = z_weight[zi];
+                        const Real z_wi = y_wj*z_weight[zi];
                         const int nID_row = 3*nIDs_row[xi+2*(yi+2*zi)];
                         for (int zj=0; zj<2; ++zj) {
-                           const Real z_wj = z_weight[zj];
+                           const Real z_wj = z_wi*z_weight[zj];
                            const int nID_col = 3*nIDs_col[xj+2*(yj+2*zj)];
                            for (int ii=0; ii<2; ++ii) {
                               for (int jj=0; jj<2; ++jj) {
                                  matA(nID_row+ii,nID_col+jj) +=
-                                    x_wi*x_wj*y_wi*y_wj*z_wi*z_wj*alpha(ii,jj);
+                                    z_wj*alpha(ii,jj);
                               }
                            }
                         }

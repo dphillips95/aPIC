@@ -16,7 +16,7 @@ TINY_PROFILE = TRUE
 PROFILE = FALSE
 USE_CURLB_MATRIX = TRUE    # Use matrices for curl B
 USE_CURLE_MATRIX = TRUE    # Use matrices for curl E
-USE_CURRENT_MATRIX = FALSE # Use matrices for current due to E^{n+1}
+USE_CURRENT_MATRIX = FALSE # Use matrices for current due to E (mass matrices)
 
 include Make.package
 include $(AMREX_HOME)/Tools/GNUMake/Make.defs

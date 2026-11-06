@@ -30,7 +30,7 @@ Author(s): David Phillips
 
 namespace PhysConst {
    static constexpr amrex::Real c =    299792458.;
-   static constexpr amrex::Real mu0 =  1.2566370614359173e-06;
+   static constexpr amrex::Real mu0 =  4e-7*M_PI; // 1.2566370614359173e-6;
    static constexpr amrex::Real eps0 = 1/(mu0*c*c); // 8.854187817e-12;
    static constexpr amrex::Real q_e =  1.6021764620000001e-19;
    static constexpr amrex::Real m_e =  9.10938291e-31;

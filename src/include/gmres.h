@@ -35,6 +35,8 @@ Author(s): David Phillips
 #include <AMReX_GMRES.H>
 #include <AMReX_iMultiFab.H>
 
+#include <AMReX_Print.H>
+
 #include <cmath>
 
 // GMRES "vector" class; consists of B and E MultiFabs
@@ -339,17 +341,17 @@ public:
    
    // Apply given matrix to E data in x to give B data in Ax (curl E)
    // Note: Data is summed not overwritten
-   template <typename T>
-   static void apply_matrix_E2B(BE& Ax, const BE& x, const std::array<amrex::LayoutData<T>,3>& matA_E2B, amrex::Real fact) {
+   template <typename U>
+   static void apply_matrix_E2B(BE& Ax, const BE& x, const std::array<amrex::LayoutData<U>,3>& matA_E2B, amrex::Real fact) {
       amrex::MultiFab&       Ax_Bfx { Ax.getB_fx()     };
       amrex::MultiFab&       Ax_Bfy { Ax.getB_fy()     };
       amrex::MultiFab&       Ax_Bfz { Ax.getB_fz()     };
       const amrex::MultiFab& x_En   { x.getE_n_const() };
       
       for (amrex::MFIter mfi(x_En); mfi.isValid(); ++mfi) {
-         const T& matA_E2Bx_mf { matA_E2B[0][mfi] };
-         const T& matA_E2By_mf { matA_E2B[1][mfi] };
-         const T& matA_E2Bz_mf { matA_E2B[2][mfi] };
+         const U& matA_E2Bx_mf { matA_E2B[0][mfi] };
+         const U& matA_E2By_mf { matA_E2B[1][mfi] };
+         const U& matA_E2Bz_mf { matA_E2B[2][mfi] };
          
          amrex::FArrayBox&       Ax_Bfx_data { Ax_Bfx[mfi] };
          amrex::FArrayBox&       Ax_Bfy_data { Ax_Bfy[mfi] };
@@ -382,13 +384,13 @@ public:
       }
    }
    
-   template <typename T>
-   static void apply_matrix_E2E(BE& Ax, const BE& x, const amrex::LayoutData<T>& matA_E2E, amrex::Real fact) {
+   template <typename V>
+   static void apply_matrix_E2E(BE& Ax, const BE& x, const amrex::LayoutData<V>& matA_E2E, amrex::Real fact) {
       amrex::MultiFab&       Ax_En { Ax.getE_n()      };
       const amrex::MultiFab& x_En  { x.getE_n_const() };
       
       for (amrex::MFIter mfi(x_En); mfi.isValid(); ++mfi) {
-         const T& matA_E2E_mf { matA_E2E[mfi] };
+         const V& matA_E2E_mf { matA_E2E[mfi] };
          
          amrex::FArrayBox&       Ax_En_data { Ax_En[mfi] };
          const amrex::FArrayBox& x_En_data  { x_En[mfi]  };
@@ -515,7 +517,8 @@ public:
    // Actual operator matrix product, i.e. x input, Ax output
    void apply(BE& Ax, const BE& x) {
       BL_PROFILE("gmres_apply()");
-      
+
+      // Ax is reset to match x (except ghost cells)
       BE::Copy(Ax,x,0);
 
       // Each operator - curl B, curl E, current - can be applied as matrix or direct operator
@@ -539,10 +542,16 @@ public:
       
       BL_PROFILE_VAR("gmres_current",TIMER_current);
 #if USE_CURRENT_MATRIX
-      // apply_matrix_E2E(Ax, x, *m_matA_E2E, m_dt*m_theta/PhysConst::eps0);
+      BE::apply_matrix_E2E(Ax, x, *m_matA_E2E, m_dt*m_theta/PhysConst::eps0);
 #else
-      compute_jHat_en_all(Ax.getE_n(), m_dt, m_theta, x.getB_fx_const(), x.getB_fy_const(), x.getB_fz_const(), x.getE_n_const(), m_pContainer_list, m_pop_list, m_dV_inv, m_dt*m_theta/PhysConst::eps0);
+      compute_j_E_all(Ax.getE_n(), m_dt, m_theta, x.getB_fx_const(), x.getB_fy_const(), x.getB_fz_const(), x.getE_n_const(), m_pContainer_list, m_pop_list, m_dV_inv*m_dt*m_theta/PhysConst::eps0);
 #endif
+      // amrex::Print() << "E_{n+1}: ";
+      // view_MultiFab(x.getE_n_const());
+      
+      // amrex::Print() << "Current due to E_{n+1} + E_{n+1}: ";
+      // view_MultiFab(Ax.getE_n_const());
+      
       BL_PROFILE_VAR_STOP(TIMER_current);
    }
    
@@ -640,49 +649,79 @@ inline void gmres_step(BE& x, const amrex::MultiFab& jHat, std::vector<Populatio
    linop
 #if USE_CURLB_MATRIX || USE_CURLE_MATRIX || USE_CURRENT_MATRIX
       <
-#if USE_CURLB_MATRIX
+   #if USE_CURLB_MATRIX
       T,
-#endif
-#if USE_CURLE_MATRIX
+   #endif
+   #if USE_CURLE_MATRIX
       U,
-#endif
-#if USE_CURRENT_MATRIX
+   #endif
+   #if USE_CURRENT_MATRIX
       V
-#endif
+   #endif
       >
 #endif
       gmres_operator(x.getBoxArray(), x.getDistributionMap(), x.nghost(), dx, dt, theta, x.getPeriod(),
 #if USE_CURLB_MATRIX
-                               matA_B2E,
+      matA_B2E,
 #endif
 #if USE_CURLE_MATRIX
-                               matA_E2B,
+      matA_E2B,
 #endif
 #if USE_CURRENT_MATRIX
-                               matA_E2E,
+      matA_E2E,
 #endif
-                               pop_list, pContainer_list);
+      pop_list, pContainer_list);
    
    amrex::GMRES<BE,linop
-                #if USE_CURLB_MATRIX || USE_CURLE_MATRIX || USE_CURRENT_MATRIX
-      <
-#if USE_CURLB_MATRIX
-      T,
+#if USE_CURLB_MATRIX || USE_CURLE_MATRIX || USE_CURRENT_MATRIX
+         <
+   #if USE_CURLB_MATRIX
+         T,
+   #endif
+   #if USE_CURLE_MATRIX
+         U,
+   #endif
+   #if USE_CURRENT_MATRIX
+         V
+   #endif
+         >
 #endif
-#if USE_CURLE_MATRIX
-      U,
-#endif
-#if USE_CURRENT_MATRIX
-      V
-#endif
-      >
-#endif
-                > gmres_solver;
+          > gmres_solver;
    
    gmres_solver.define(gmres_operator);
    gmres_solver.setVerbose(verbosity);
    gmres_solver.setMaxIters(max_gmres);
    gmres_solver.solve(x, b, rtol, atol);
+
+   // amrex::Print() << "Final Bx_{n+1}: ";
+   // view_MultiFab(x.getB_fx_const());
+   // amrex::Print() << "Final By_{n+1}: ";
+   // view_MultiFab(x.getB_fy_const());
+   // amrex::Print() << "Final Bz_{n+1}: ";
+   // view_MultiFab(x.getB_fz_const());
+   // amrex::Print() << "Final E_{n+1}: ";
+   // view_MultiFab(x.getE_n_const());
+
+   BE Ax = x.copy_dim(0);
+   gmres_operator.apply(Ax, x);
+
+   // amrex::Print() << "Final residual Bx: ";
+   // view_MultiFab(Ax.getB_fx_const());
+   // amrex::Print() << "Final residual By: ";
+   // view_MultiFab(Ax.getB_fy_const());
+   // amrex::Print() << "Final residual Bz: ";
+   // view_MultiFab(Ax.getB_fz_const());
+   // amrex::Print() << "Final residual E: ";
+   // view_MultiFab(Ax.getE_n_const());
+
+   // amrex::Print() << "b-Vector B_x: ";
+   // view_MultiFab(b.getB_fx_const());
+   // amrex::Print() << "b-Vector B_y: ";
+   // view_MultiFab(b.getB_fy_const());
+   // amrex::Print() << "b-Vector B_z: ";
+   // view_MultiFab(b.getB_fz_const());
+   // amrex::Print() << "b-Vector E_n: ";
+   // view_MultiFab(b.getE_n_const());
    
    int gmres_status = gmres_solver.getStatus();
    
@@ -691,7 +730,8 @@ inline void gmres_step(BE& x, const amrex::MultiFab& jHat, std::vector<Populatio
                      << "Iteration count: " << gmres_solver.getNumIters() << std::endl
                      << "Residual norm: " << gmres_solver.getResidualNorm() << std::endl << std::endl;
    } else {
-      amrex::Print() << "GMRES Iteration count: " << gmres_solver.getNumIters() << std::endl;
+      amrex::Print() << "GMRES Iteration count: " << gmres_solver.getNumIters() << std::endl
+                     << "Residual norm: " << gmres_solver.getResidualNorm() << std::endl << std::endl;
    }
 }
 
@@ -807,11 +847,13 @@ void get_curl_f2n_operator_ba(std::array<amrex::LayoutData<T>,3>& matA_f2n, cons
          matA_f2n[1][mfi] = matrix<amrex::Real>(3*total_n, total_fy_ghost, 0.0);
          matA_f2n[2][mfi] = matrix<amrex::Real>(3*total_n, total_fz_ghost, 0.0);
       } else {
-         constexpr int cols_per_row_f2n = 4;
-         
-         matA_f2n[0][mfi] = sp_matrix<amrex::Real>(2*cols_per_row_f2n*total_n, 3*total_n, total_fx_ghost);
-         matA_f2n[1][mfi] = sp_matrix<amrex::Real>(2*cols_per_row_f2n*total_n, 3*total_n, total_fy_ghost);
-         matA_f2n[2][mfi] = sp_matrix<amrex::Real>(2*cols_per_row_f2n*total_n, 3*total_n, total_fz_ghost);
+         // Each row of each sub-matrix has 4 non-zero elements
+         constexpr int elems_per_row = 4;
+
+         // Note that the number of entries is doubled as for each component of B, 2 components of E are non-zero
+         matA_f2n[0][mfi] = sp_matrix<amrex::Real>(2*elems_per_row*total_n, 3*total_n, total_fx_ghost);
+         matA_f2n[1][mfi] = sp_matrix<amrex::Real>(2*elems_per_row*total_n, 3*total_n, total_fy_ghost);
+         matA_f2n[2][mfi] = sp_matrix<amrex::Real>(2*elems_per_row*total_n, 3*total_n, total_fz_ghost);
       }
       
       get_curl_f2n_operator(matA_f2n[0][mfi], matA_f2n[1][mfi], matA_f2n[2][mfi], bx_n, nghost, dx);
@@ -819,8 +861,8 @@ void get_curl_f2n_operator_ba(std::array<amrex::LayoutData<T>,3>& matA_f2n, cons
 }
 
 // Compute curl n2f operator for entire BoxArray
-template <typename T>
-void get_curl_n2f_operator_ba(std::array<amrex::LayoutData<T>,3>& matA_n2f, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm) {
+template <typename U>
+void get_curl_n2f_operator_ba(std::array<amrex::LayoutData<U>,3>& matA_n2f, const int nghost, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm) {
    for (amrex::MFIter mfi(ba,dm); mfi.isValid(); ++mfi) {
       const amrex::Box&
          bx_fx = mfi.tilebox(AMReXConst::btype_fx),
@@ -841,16 +883,17 @@ void get_curl_n2f_operator_ba(std::array<amrex::LayoutData<T>,3>& matA_n2f, cons
          total_n_ghost = math::product(len_n_ghost);
 
       // Conditional compilation of normal vs. sparse matrix construction
-      if constexpr (std::is_same<T, matrix<amrex::Real>>::value) {
+      if constexpr (std::is_same<U, matrix<amrex::Real>>::value) {
          matA_n2f[0][mfi] = matrix<amrex::Real>(total_fx, 3*total_n_ghost, 0.0);
          matA_n2f[1][mfi] = matrix<amrex::Real>(total_fy, 3*total_n_ghost, 0.0);
          matA_n2f[2][mfi] = matrix<amrex::Real>(total_fz, 3*total_n_ghost, 0.0);
       } else {
-         constexpr int cols_per_row_n2f = 8;
+         // Each row of each sub-matrix has 8 non-zero elements
+         constexpr int elems_per_row = 8;
          
-         matA_n2f[0][mfi] = sp_matrix<amrex::Real>(cols_per_row_n2f*total_fx, total_fx, 3*total_n_ghost);
-         matA_n2f[1][mfi] = sp_matrix<amrex::Real>(cols_per_row_n2f*total_fy, total_fy, 3*total_n_ghost);
-         matA_n2f[2][mfi] = sp_matrix<amrex::Real>(cols_per_row_n2f*total_fz, total_fz, 3*total_n_ghost);
+         matA_n2f[0][mfi] = sp_matrix<amrex::Real>(elems_per_row*total_fx, total_fx, 3*total_n_ghost);
+         matA_n2f[1][mfi] = sp_matrix<amrex::Real>(elems_per_row*total_fy, total_fy, 3*total_n_ghost);
+         matA_n2f[2][mfi] = sp_matrix<amrex::Real>(elems_per_row*total_fz, total_fz, 3*total_n_ghost);
       }
       
       get_curl_n2f_operator(matA_n2f[0][mfi], matA_n2f[1][mfi], matA_n2f[2][mfi], bx_fx, nghost, dx);

@@ -103,64 +103,16 @@ void node2edge(MultiFab& xedge_data, MultiFab& yedge_data, MultiFab& zedge_data,
    }
 }
 
-// Interpolate scalar node data to position r; input is Array4 not MultiFab
-// so position must be inside box real bounds
-Real node2r_scalar(const Array4<const Real>& node_array, const Real xpos, const Real ypos, const Real zpos, const IntVect& cell_indices, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min) {
-   // Cell indices (i,j,k) containing given position
-   // Surrounding nodes are at x = i, i+1; y = j, j+1; z = k, k+1
-   
-   std::array<Real,2>
-      x_weight = CIC_weights_1D(xpos, dx[0], cell_indices[0], dom_min[0]),
-      y_weight = CIC_weights_1D(ypos, dx[1], cell_indices[1], dom_min[1]),
-      z_weight = CIC_weights_1D(zpos, dx[2], cell_indices[2], dom_min[2]);
-
-   Real ret = 0;
-   for (int ii=0; ii<2; ++ii) {
-      for (int jj=0; jj<2; ++jj) {
-         for (int kk=0; kk<2; ++kk) {
-            ret += node_array(cell_indices[0]+ii, cell_indices[1]+jj, cell_indices[2]+kk)*x_weight[ii]*y_weight[jj]*z_weight[kk];
-         }
-      }
-   }
-
-   return ret;
-}
-
-// Interpolate vector node data to position r; input is Array4 not MultiFab
-// so position must be inside box real bounds
-std::array<Real,3> node2r_vector(const Array4<const Real>& node_array, const Real xpos, const Real ypos, const Real zpos, const IntVect& cell_indices, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min) {
-   // Cell indices (i,j,k) containing given position
-   // Surrounding nodes are at x = i, i+1; y = j, j+1; z = k, k+1
-   
-   std::array<Real,2>
-      x_weight = CIC_weights_1D(xpos, dx[0], cell_indices[0], dom_min[0]),
-      y_weight = CIC_weights_1D(ypos, dx[1], cell_indices[1], dom_min[1]),
-      z_weight = CIC_weights_1D(zpos, dx[2], cell_indices[2], dom_min[2]);
-
-   std::array<Real,3> ret = {0,0,0};
-   for (int ii=0; ii<2; ++ii) {
-      for (int jj=0; jj<2; ++jj) {
-         for (int kk=0; kk<2; ++kk) {
-            for (int nn=0; nn<3; ++nn) {
-               ret[nn] += node_array(cell_indices[0]+ii, cell_indices[1]+jj, cell_indices[2]+kk, nn)*x_weight[ii]*y_weight[jj]*z_weight[kk];
-            }
-         }
-      }
-   }
-   
-   return ret;
-}
-
 // Interpolate vector face data to position r; input is Array4 not MultiFab
 // so position must be inside box real bounds
-std::array<Real,3> face2r(const Array4<const Real>& xface_array, const Array4<const Real>& yface_array, const Array4<const Real>& zface_array, const Real xpos, const Real ypos, const Real zpos, const IntVect& cell_indices, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min) {
+std::array<Real,3> face2r(const Array4<const Real>& xface_array, const Array4<const Real>& yface_array, const Array4<const Real>& zface_array, const Real xpos, const Real ypos, const Real zpos, const IntVect& cell_indices, const GpuArray<Real,3>& dx, const GpuArray<Real,3>& dom_min) {
    // Cell indices (i,j,k) containing given position
    // Surrounding faces are at x = i, i+1; y = j, j+1; z = k, k+1
    
    const std::array<Real,2>
-      x_weight = CIC_weights_1D(xpos, dx[0], cell_indices[0], dom_min[0]),
-      y_weight = CIC_weights_1D(ypos, dx[1], cell_indices[1], dom_min[1]),
-      z_weight = CIC_weights_1D(zpos, dx[2], cell_indices[2], dom_min[2]);
+      x_weight = CIC_weights_1D(xpos, dx[0], cell_indices[0], dom_min[0], 1),
+      y_weight = CIC_weights_1D(ypos, dx[1], cell_indices[1], dom_min[1], 1),
+      z_weight = CIC_weights_1D(zpos, dx[2], cell_indices[2], dom_min[2], 1);
 
    std::array<Real,3> ret = {0,0,0};
    for (int nn=0; nn<2; ++nn) {
@@ -170,6 +122,20 @@ std::array<Real,3> face2r(const Array4<const Real>& xface_array, const Array4<co
    }
    
    return ret;
+}
+
+// cell_indices not already given
+std::array<Real,3> face2r(const Array4<const Real>& xface_array, const Array4<const Real>& yface_array, const Array4<const Real>& zface_array, const Real xpos, const Real ypos, const Real zpos, const GpuArray<Real,3>& dx, const GpuArray<Real,3>& dom_min) {
+   // Cell indices (i,j,k) containing given position
+   // Surrounding faces are at x = i, i+1; y = j, j+1; z = k, k+1
+
+   const IntVect cell_indices = {
+      get_pos_index(xpos, dx[0], dom_min[0], 1),
+      get_pos_index(ypos, dx[1], dom_min[1], 1),
+      get_pos_index(zpos, dx[2], dom_min[2], 1)
+   };
+   
+   return face2r(xface_array, yface_array, zface_array, xpos, ypos, zpos, cell_indices, dx, dom_min);
 }
 
 // Diagnostics: Compute cell Magnetic and Electric energy - Output is MultiFab with three components - B energy, E energy, Total energy

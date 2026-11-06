@@ -35,125 +35,178 @@ Author(s): David Phillips
 // This method does not sort, and is intended only for debugging
 bool test_order(const std::vector<int>& row_indices, const std::vector<int>& col_indices);
 
+// Non-sparse Matrix base class; dimensions could be known at compile time or only run time, but must be fixed
+template <typename T, typename Derived>
+class matrix_base {
+public:
+   // matrix_base(const matrix_base<T>&) = delete;
+   // matrix_base<T>& operator=(const matrix_base<T>&) = delete;
+
+   // matrix_base(matrix_base<T>&&) = default;
+   // matrix_base<T>& operator=(matrix_base<T>&&) = default;
+   
+   size_t get_nrows() const {
+      return static_cast<const Derived*>(this)->get_nrows();
+   }
+   size_t get_ncols() const {
+      return static_cast<const Derived*>(this)->get_ncols();
+   }
+
+   std::span<T> get_data() {
+      return static_cast<Derived*>(this)->get_data();
+   }
+   std::span<const T> get_data() const {
+      return static_cast<const Derived*>(this)->get_data();
+   }
+
+   // Set all data entries to val
+   void setVal(const T val) {
+      auto m_dat = get_data();
+      std::fill(m_dat.begin(), m_dat.end(), val);
+   }
+
+   // Return editable ii,jj element
+   T& operator()(const size_t ii, const size_t jj) {
+      return get_data()[ii*get_ncols() + jj];
+   }
+   
+   // Return non-editable ii,jj element
+   const T& operator()(const size_t ii, const size_t jj) const {
+      return get_data()[ii*get_ncols() + jj];
+   }
+
+   // Get matrix dimensions
+   std::array<size_t,2> size() const { return {get_nrows(),get_ncols()}; }
+
+   // Multiply vector x by matrix, scale by a and add to ret
+   void mmult_add(std::span<T> ret, const std::span<const T> x, const T a = 1) const {
+      const size_t m_nrows = get_nrows();
+      const size_t m_ncols = get_ncols();
+#ifdef AMREX_DEBUG
+      assert(m_ncols == x.size());
+      assert(m_nrows == ret.size());
+#endif
+      for (size_t ii=0; ii<m_nrows; ++ii) {
+         for (size_t jj=0; jj<m_ncols; ++jj) {
+            ret[ii] += a*(*this)(ii,jj)*x[jj];
+         }
+      }
+   }
+
+   // Multiply vector x by matrix
+   void mmult(std::span<T> ret, const std::span<const T> x) const {
+      std::fill(ret.begin(), ret.end(), 0);
+      mmult_add(ret, x);
+   }
+
+   // Scale entire matrix by given factor
+   void scale(const T fact) {
+      auto m_dat = get_data();
+      for (T& v : m_dat) {
+         v *= fact;
+      }
+   }
+};
+
+template<
+   typename T,
+   std::size_t m_nrows = std::dynamic_extent,
+   std::size_t m_ncols = std::dynamic_extent
+   >
+class matrix;
+
+// Non-sparse Matrix class, dimensions known at compile time
+template <
+   typename T,
+   std::size_t m_nrows,
+   std::size_t m_ncols
+   >
+class matrix : public matrix_base<T, matrix<T, m_nrows, m_ncols>> {
+private:
+   std::array<T, m_nrows*m_ncols> m_dat;
+public:
+   using matrix_base<T, matrix<T,m_nrows, m_ncols>>::mmult;
+   
+   matrix() : m_dat() {}
+   
+   matrix(const T& val) {
+      this->setVal(val);
+   }
+
+   size_t get_nrows() const {
+      return m_nrows;
+   }
+   size_t get_ncols() const {
+      return m_ncols;
+   }
+   
+   std::span<T> get_data() {
+      return m_dat;
+   }
+   std::span<const T> get_data() const {
+      return m_dat;
+   }
+   
+   std::array<T,m_nrows> mmult(const std::array<T,m_ncols>& x) const {
+      std::array<T,m_nrows> ret;
+      this->mmult(ret, x);
+      return ret;
+   }
+
+   std::array<T,m_nrows> mmult(const std::span<const T> x) const {
+      std::array<T,m_nrows> ret;
+      this->mmult(ret, x);
+      return ret;
+   }
+
+   template <size_t n>
+   constexpr static matrix<T,n,n> identity() {
+      T tmp = 0;
+      matrix<T,n,n> ret(tmp);
+      for (size_t ii=0; ii<n; ++ii) {
+         ret(ii,ii) = 1;
+      }
+      return ret;
+   }
+};
+
 // Non-sparse Matrix class; dimensions are defined at run time but are fixed
 template <typename T>
-class matrix {
+class matrix<T, std::dynamic_extent, std::dynamic_extent> : public matrix_base<T, matrix<T>> {
 private:
    size_t m_nrows,m_ncols;
    std::vector<T> m_dat;
 public:
-   matrix() : m_nrows(0), m_ncols(0), m_dat() {}
+   using matrix_base<T, matrix<T>>::mmult;
    
    matrix(size_t n, size_t m) : m_nrows(n), m_ncols(m), m_dat(n*m) {}
    
    matrix(size_t n, size_t m, T val) : m_nrows(n), m_ncols(m), m_dat(n*m, val) {}
 
-   // matrix(const matrix<T>&) = delete;
-   // matrix<T>& operator=(const matrix<T>&) = delete;
-
-   // matrix(matrix<T>&&) = default;
-   // matrix<T>& operator=(matrix<T>&&) = default;
-
-   // Set all data entries to val but keep structure
-   void setVal(const T val) {
-      std::fill(m_dat.begin(), m_dat.end(), val);
+   size_t get_nrows() const {
+      return m_nrows;
+   }
+   size_t get_ncols() const {
+      return m_ncols;
    }
    
-   T& operator()(const size_t ii, const size_t jj) {
-#ifdef AMREX_DEBUG
-      assert(ii < m_nrows);
-      assert(jj < m_ncols);
-#endif
-      return m_dat[ii*m_ncols + jj];
-   }
-   
-   const T& operator()(const size_t ii, const size_t jj) const {
-#ifdef AMREX_DEBUG
-      assert(ii < m_nrows);
-      assert(jj < m_ncols);
-#endif
-      return m_dat[ii*m_ncols + jj];
+   std::span<T> get_data() {
+      return m_dat;
    }
 
-   // Returns span as "view" of matrix entries, i.e. no copying
-   std::span<const T> slice_row_const(size_t ii) const {
-#ifdef AMREX_DEBUG
-      assert(ii < m_nrows);
-#endif
-      return std::span<const T>(m_dat.data() + ii*m_ncols, m_ncols);
+   std::span<const T> get_data() const {
+      return m_dat;
    }
 
-   // Returns span as "view" of matrix entries, i.e. no copying
-   std::span<T> slice_row(size_t ii) {
-#ifdef AMREX_DEBUG
-      assert(ii < m_nrows);
-#endif
-      return std::span<T>(m_dat.data() + ii*m_ncols, m_ncols);
-   }
-   
-   // Non-contiguous slice requires copying, so returns vector
-   std::vector<T> slice_col(size_t jj) {
-#ifdef AMREX_DEBUG
-      assert(jj < m_ncols);
-#endif
-      std::vector<T> ret(m_nrows, 0.0);
-      for (size_t ii=0; ii<m_nrows; ++ii) {
-         ret[ii] = m_dat(ii,jj);
-      }
-      
-      return ret;
+   std::vector<T> mmult(const std::vector<T>& x) const {
+      std::vector<T> ret(m_nrows);
+      return this->mmult(ret, x);
    }
 
-   std::array<size_t,2> size() const { return {m_nrows,m_ncols}; }
-
-   static void mmult(std::span<T> ret, const matrix<T>& A, const std::span<const T> x) {
-#ifdef AMREX_DEBUG
-      assert(A.m_ncols == x.size());
-      assert(A.m_nrows == ret.size());
-#endif
-      for (size_t ii=0; ii<A.m_nrows; ++ii) {
-         ret[ii] = 0;
-         for (size_t jj=0; jj<A.m_ncols; ++jj) {
-            ret[ii] += A.m_dat[ii*A.m_ncols + jj]*x[jj];
-         }
-      }
+   std::vector<T> mmult(const std::span<const T> x) const {
+      std::vector<T> ret(m_nrows);
+      return this->mmult(ret, x);
    }
-   
-   static std::vector<T> mmult(const matrix<T>& A, const std::span<const T> x) {
-      std::vector<T> ret(A.m_nrows, 0.0);
-      matrix<T>::mmult(ret, A, x);
-      return ret;
-   }
-
-   static std::vector<T> mmult(const matrix<T>& A, const std::vector<T>& x) {
-      std::vector<T> ret(A.m_nrows, 0.0);
-      matrix<T>::mmult(ret, A, x);
-      return ret;
-   }
-
-   static void mmult(std::span<T> ret, const matrix<T>& A, const std::vector<T>& x) {
-      matrix<T>::mmult(ret, A, std::span<T>(x.begin(), x.end()));
-   }
-   
-   std::vector<T> mmult(const std::vector<T>& x) const { return mmult(*this, x); }
-
-   std::vector<T> mmult(const std::span<const T> x) const { return mmult(*this, x); }
-
-   void mmult(std::span<T> ret, const std::span<const T> x) const { mmult(ret, *this, x); }
-
-   static void mmult_add(std::span<T> ret, const matrix<T>& A, const std::span<const T> x, T a) {
-#ifdef AMREX_DEBUG
-      assert(A.m_ncols == x.size());
-      assert(A.m_nrows == ret.size());
-#endif
-      for (size_t ii=0; ii<A.m_nrows; ++ii) {
-         for (size_t jj=0; jj<A.m_ncols; ++jj) {
-            ret[ii] += a*A.m_dat[ii*A.m_ncols + jj]*x[jj];
-         }
-      }
-   }
-   
-   void mmult_add(std::span<T> ret, const std::span<const T> x, T a) const { mmult_add(ret, *this, x, a); }
    
    static matrix<T> identity(size_t n) {
       T tmp = 0;
@@ -162,13 +215,6 @@ public:
          ret(ii,ii) = 1;
       }
       return ret;
-   }
-
-   // Scale entire matrix by given factor
-   void scale(const T fact) {
-      for (size_t ii=0; ii<m_nrows*m_ncols; ++ii) {
-         m_dat[ii] *= fact;
-      }
    }
 };
 

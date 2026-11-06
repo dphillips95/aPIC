@@ -26,6 +26,7 @@ Author(s): David Phillips
 #define OPERATORS_H_
 
 #include <constants.h>
+#include <indexers.h>
 
 #include <AMReX_REAL.H>
 #include <AMReX_MultiFab.H>
@@ -126,9 +127,58 @@ inline std::array<amrex::MultiFab,3> node2edge(const amrex::MultiFab& node_data,
    return edge_data;
 }
 
-amrex::Real node2r_scalar(const amrex::Array4<const amrex::Real>& node_array, const amrex::Real xpos, const amrex::Real ypos, const amrex::Real zpos, const amrex::IntVect& cell_indices, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min);
-std::array<amrex::Real,3> node2r_vector(const amrex::Array4<const amrex::Real>& node_array, const amrex::Real xpos, const amrex::Real ypos, const amrex::Real zpos, const amrex::IntVect& cell_indices, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min);
+// Interpolate node data to position r; input is Array4 not MultiFab
+// so position must be inside box real bounds
+template <typename T>
+T node2r(const amrex::Array4<const amrex::Real>& node_array, const amrex::Real xpos, const amrex::Real ypos, const amrex::Real zpos, const amrex::IntVect& cell_indices, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min) {
+   // Cell indices (i,j,k) containing given position
+   // Surrounding nodes are at x = i, i+1; y = j, j+1; z = k, k+1
+   
+   std::array<amrex::Real,2>
+      x_weight = CIC_weights_1D(xpos, dx[0], cell_indices[0], dom_min[0], 1),
+      y_weight = CIC_weights_1D(ypos, dx[1], cell_indices[1], dom_min[1], 1),
+      z_weight = CIC_weights_1D(zpos, dx[2], cell_indices[2], dom_min[2], 1);
+
+   T ret{};
+   for (int ii=0; ii<2; ++ii) {
+      for (int jj=0; jj<2; ++jj) {
+         for (int kk=0; kk<2; ++kk) {
+            const amrex::Real weight = x_weight[ii]*y_weight[jj]*z_weight[kk];
+            const int
+               x_index = cell_indices[0]+ii,
+               y_index = cell_indices[1]+jj,
+               z_index = cell_indices[2]+kk;
+            if constexpr (std::is_same_v<T, amrex::Real>) {
+               ret += node_array(x_index,y_index,z_index)*weight;
+            } else {
+               for (int nn=0; nn<3; ++nn) {
+                  ret[nn] += node_array(x_index,y_index,z_index,nn)*weight;
+               }
+            }
+         }
+      }
+   }
+
+   return ret;
+}
+
+// cell_indices not already given
+template <typename T>
+T node2r(const amrex::Array4<const amrex::Real>& node_array, const amrex::Real xpos, const amrex::Real ypos, const amrex::Real zpos, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min) {
+   // Cell indices (i,j,k) containing given position
+   // Surrounding nodes are at x = i, i+1; y = j, j+1; z = k, k+1
+   const amrex::IntVect cell_indices = {
+      get_pos_index(xpos, dx[0], dom_min[0], 1),
+      get_pos_index(ypos, dx[1], dom_min[1], 1),
+      get_pos_index(zpos, dx[2], dom_min[2], 1)
+   };
+
+   return node2r<T>(node_array, xpos, ypos, zpos, cell_indices, dx, dom_min);
+}
+
 std::array<amrex::Real,3> face2r(const amrex::Array4<const amrex::Real>& xface_array, const amrex::Array4<const amrex::Real>& yface_array, const amrex::Array4<const amrex::Real>& zface_array, const amrex::Real xpos, const amrex::Real ypos, const amrex::Real zpos, const amrex::IntVect& cell_indices, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min);
+
+std::array<amrex::Real,3> face2r(const amrex::Array4<const amrex::Real>& xface_array, const amrex::Array4<const amrex::Real>& yface_array, const amrex::Array4<const amrex::Real>& zface_array, const amrex::Real xpos, const amrex::Real ypos, const amrex::Real zpos, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min);
 
 // Diagnostics
 // Energy_c should be cell-centred with 3 components
@@ -292,55 +342,6 @@ inline amrex::MultiFab div_n2c(const amrex::MultiFab& node_data, const amrex::Gp
    div_n2c(cell_div, node_data, dx);
 
    return cell_div;
-}
-
-// Indexers
-// Get cell (or node etc.) ID from given cell indices of cell in box
-// If the box has ghost cells then index needs to be shifted to accomodate
-inline int get_cellID(int x_index, int y_index, int z_index, const amrex::IntVect& len, int nghost = 0) {
-   x_index += nghost;
-   y_index += nghost;
-   z_index += nghost;
-   return (z_index*len[1] + y_index)*len[0] + x_index;
-}
-
-inline int get_cellID(amrex::IntVect cell_indices, const amrex::IntVect& len, int nghost = 0) {
-   cell_indices += nghost;
-   return get_cellID(cell_indices[0], cell_indices[1], cell_indices[2], len);
-}
-
-template <size_t num>
-inline std::array<int,num> get_cellID(const std::array<amrex::IntVect,num>& cell_indices, const amrex::IntVect& len, int nghost = 0) {
-   std::array<int,num> ret;
-   for (size_t ii=0; ii<num; ++ii) {
-      ret[ii] = get_cellID(cell_indices[0], len, nghost);
-   }
-   return ret;
-}
-
-// Get cell indices from given cellID
-inline amrex::IntVect get_cell_indices(int cellID, const amrex::IntVect& len, int nghost = 0) {
-   int
-      x_index = cellID%len[0]          - nghost,
-      y_index = (cellID/len[0])%len[1] - nghost,
-      z_index = cellID/(len[0]*len[1]) - nghost;
-   return amrex::IntVect(x_index,y_index,z_index);
-}
-
-// Get (global) cell/face/edge/node indices from true domain position
-inline amrex::IntVect get_pos_indices(amrex::Real xpos, amrex::Real ypos, amrex::Real zpos, const amrex::GpuArray<amrex::Real,3>& dx, const amrex::GpuArray<amrex::Real,3>& dom_min, const amrex::IntVect& index_type = amrex::IntVect::TheZeroVector()) {
-   amrex::IntVect ret = {
-      int(floor((xpos - dom_min[0])/dx[0] + index_type[0]/2)),
-      int(floor((ypos - dom_min[1])/dx[1] + index_type[1]/2)),
-      int(floor((zpos - dom_min[2])/dx[2] + index_type[2]/2))
-   };
-   return ret;
-}
-
-// Particle weight of nearest lower neighbour at given location for node-type indexing
-inline std::array<amrex::Real,2> CIC_weights_1D(const amrex::Real x, const amrex::Real dx, const int x_ind, const amrex::Real xmin) {
-   amrex::Real w = (x - xmin)/dx - x_ind;
-   return {1-w, w};
 }
 
 // Check symmetry in given direction (i.e. check if constant along given direction(s)

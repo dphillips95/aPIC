@@ -31,6 +31,8 @@ Author(s): David Phillips, Ilja Honkonen
 #include <AMReX_REAL.H>
 #include <AMReX_Particles.H>
 
+#include <AMReX_Print.H>
+
 #include <vector>
 
 struct Population {
@@ -72,9 +74,10 @@ using myPLevel = myPContainer::ParticleLevel;
 using myAoS = myPContainer::AoS;
 using mySoA = myPContainer::SoA;
 
-inline matrix<amrex::Real> compute_alpha(const amrex::Real Bp_x, const amrex::Real Bp_y, const amrex::Real Bp_z) {
-   matrix<amrex::Real> ret(3,3);
-
+// Compute alpha (magnetic rotation matrix)
+inline matrix<amrex::Real,3,3> compute_alpha(const amrex::Real Bp_x, const amrex::Real Bp_y, const amrex::Real Bp_z) {
+   matrix<amrex::Real,3,3> ret;
+   
    ret(0,0) = Bp_x*Bp_x + 1;
    ret(0,1) = Bp_x*Bp_y + Bp_z;
    ret(0,2) = Bp_x*Bp_z - Bp_y;
@@ -84,26 +87,53 @@ inline matrix<amrex::Real> compute_alpha(const amrex::Real Bp_x, const amrex::Re
    ret(2,0) = Bp_z*Bp_x + Bp_y;
    ret(2,1) = Bp_z*Bp_y - Bp_x;
    ret(2,2) = Bp_z*Bp_z + 1;
-   
-   ret.scale(1/(1 + Bp_x*Bp_x + Bp_y*Bp_y + Bp_z*Bp_z));
+
+   amrex::Real scale_factor = 1/(1 + math::square(Bp_x, Bp_y, Bp_z));
+
+   ret.scale(scale_factor);
+
+   return ret;
+}
+
+inline matrix<amrex::Real,3,3> compute_alpha(const std::array<amrex::Real,3>& B_p) {
+   return compute_alpha(B_p[0], B_p[1], B_p[2]);
+}
+
+// Compute alpha as flat array
+inline std::array<amrex::Real,9> compute_alpha_arr(const amrex::Real Bp_x, const amrex::Real Bp_y, const amrex::Real Bp_z) {
+   std::array<amrex::Real,9> ret;
+
+   ret[0] = Bp_x*Bp_x + 1;
+   ret[1] = Bp_x*Bp_y + Bp_z;
+   ret[2] = Bp_x*Bp_z - Bp_y;
+   ret[3] = Bp_y*Bp_x - Bp_z;
+   ret[4] = Bp_y*Bp_y + 1;
+   ret[5] = Bp_y*Bp_z + Bp_x;
+   ret[6] = Bp_z*Bp_x + Bp_y;
+   ret[7] = Bp_z*Bp_y - Bp_x;
+   ret[8] = Bp_z*Bp_z + 1;
+
+   amrex::Real scale_factor = 1/(1 + math::square(Bp_x, Bp_y, Bp_z));
+
+   for (int ii=0; ii<9; ++ii) { ret[ii] *= scale_factor; }
    
    return ret;   
 }
 
-inline matrix<amrex::Real> compute_alpha(const std::array<amrex::Real,3>& B_p) {
-   return compute_alpha(B_p[0], B_p[1], B_p[2]);
+inline std::array<amrex::Real,9> compute_alpha_arr(const std::array<amrex::Real,3>& B_p) {
+   return compute_alpha_arr(B_p[0], B_p[1], B_p[2]);
 }
 
 void uniform_injector(myPContainer& pContainer, const Population& pop);
 
 void fill_particles_cell(myPTile& parts, const size_t count, const amrex::Real vth, const std::vector<amrex::Real> velocity, const amrex::Real weight, amrex::GpuArray<amrex::Real,3> r_min, amrex::GpuArray<amrex::Real,3> r_max);
 
-void particlePusher(myPContainer& pContainer, const amrex::Real dt);
+void particleMover(myPContainer& pContainer, const amrex::Real dt);
 
-// Push all particle populations
-inline void particlePusher_all(std::vector<myPContainer>& pContainer_list, const amrex::Real dt) {
+// Move all particle populations
+inline void particleMover_all(std::vector<myPContainer>& pContainer_list, const amrex::Real dt) {
    for (myPContainer& pContainer : pContainer_list) {
-      particlePusher(pContainer, dt);
+      particleMover(pContainer, dt);
    }
 }
 
@@ -111,38 +141,51 @@ void particleAccelerator(myPContainer& pContainer, const amrex::MultiFab& B_fx, 
 
 inline void particleAccelerator_all(std::vector<myPContainer>& pContainer_list, const std::vector<Population>& pop_list, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const amrex::MultiFab& E_n, const amrex::Real dt, const amrex::Real theta) {
    for (size_t nn=0; nn<pContainer_list.size(); ++nn) {
-      amrex::Real beta = dt*theta*pop_list[nn].charge/pop_list[nn].mass;
+      const auto pop = pop_list[nn];
+      amrex::Real beta = dt*theta*pop.charge/pop.mass;
       particleAccelerator(pContainer_list[nn], B_fx, B_fy, B_fz, E_n, theta, beta);
    }
 }
 
+// compute jHat; rotated current due only to initial particle velocities
 void compute_jHat(amrex::MultiFab& jHat, const amrex::Real beta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const myPContainer& pContainer, amrex::Real factor);
 
 // Add contributions to jHat from all populations
-inline void compute_jHat_all(amrex::MultiFab& jHat, const amrex::Real dt_theta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, std::vector<myPContainer>& pContainer_list, const std::vector<Population>& pop_list, const amrex::Real dV_inv) {
+inline void compute_jHat_all(amrex::MultiFab& jHat, const amrex::Real dt_theta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, std::vector<myPContainer>& pContainer_list, const std::vector<Population>& pop_list, const amrex::Real factor) {
    for (size_t nn=0; nn<pContainer_list.size(); ++nn) {
-      amrex::Real beta = dt_theta*pop_list[nn].charge/pop_list[nn].mass;
-      compute_jHat(jHat, beta, B_fx, B_fy, B_fz, pContainer_list[nn], dV_inv);
+      const auto pop = pop_list[nn];
+      amrex::Real beta = dt_theta*pop.charge/pop.mass;
+      compute_jHat(jHat, beta, B_fx, B_fy, B_fz, pContainer_list[nn], pop.charge*factor);
    }
 }
 
-void compute_jHat_pr(amrex::MultiFab& jHat_pr, const amrex::Real beta, const amrex::Real theta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const amrex::MultiFab& E_n, const myPContainer& pContainer, const amrex::Real factor);
+// compute jHat_star, rotated current due to initial velocity plus acceleration due to initial electric field
+void compute_jHat_star(amrex::MultiFab& jHat_star, const amrex::Real beta, const amrex::Real theta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const amrex::MultiFab& E_n, const myPContainer& pContainer, const amrex::Real factor);
 
-// Add contributions to jHat_pr from all populations
-inline void compute_jHat_pr_all(amrex::MultiFab& jHat_pr, const amrex::Real dt, const amrex::Real theta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const amrex::MultiFab& E_n, std::vector<myPContainer>& pContainer_list, const std::vector<Population>& pop_list, const amrex::Real dV_inv) {
+// Add contributions to jHat_star from all populations
+inline void compute_jHat_star_all(amrex::MultiFab& jHat_star, const amrex::Real dt, const amrex::Real theta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const amrex::MultiFab& E_n, std::vector<myPContainer>& pContainer_list, const std::vector<Population>& pop_list, const amrex::Real factor) {
    for (size_t nn=0; nn<pContainer_list.size(); ++nn) {
-      amrex::Real beta = dt*theta*pop_list[nn].charge/pop_list[nn].mass;
-      compute_jHat_pr(jHat_pr, beta, theta, B_fx, B_fy, B_fz, E_n, pContainer_list[nn], dV_inv);
+      const auto pop = pop_list[nn];
+      amrex::Real beta = dt*theta*pop.charge/pop.mass;
+      compute_jHat_star(jHat_star, beta, theta, B_fx, B_fy, B_fz, E_n, pContainer_list[nn], pop.charge*factor);
    }
 }
 
-void compute_jHat_en(amrex::MultiFab& jHat_en, const amrex::Real beta, const amrex::Real theta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const amrex::MultiFab& E_n, const myPContainer& pContainer, const amrex::Real factor);
+// compute j_E, rotated current due to acceleration by electric field
+void compute_j_E(amrex::MultiFab& j_E, const amrex::Real beta, const amrex::Real theta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const amrex::MultiFab& E_n, const myPContainer& pContainer, const amrex::Real factor);
 
-// Add contributions to jHat_en from all populations
-inline void compute_jHat_en_all(amrex::MultiFab& jHat_en, const amrex::Real dt, const amrex::Real theta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const amrex::MultiFab& E_n, std::vector<myPContainer>& pContainer_list, const std::vector<Population>& pop_list, const amrex::Real dV_inv, const amrex::Real factor) {
+// Add contributions to j_E from all populations
+inline void compute_j_E_all(amrex::MultiFab& j_E, const amrex::Real dt, const amrex::Real theta, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, const amrex::MultiFab& E_n, std::vector<myPContainer>& pContainer_list, const std::vector<Population>& pop_list, const amrex::Real factor) {
    for (size_t nn=0; nn<pContainer_list.size(); ++nn) {
-      amrex::Real beta = dt*theta*pop_list[nn].charge/pop_list[nn].mass;
-      compute_jHat_en(jHat_en, beta, theta, B_fx, B_fy, B_fz, E_n, pContainer_list[nn], dV_inv*factor);
+      const auto pop = pop_list[nn];
+      amrex::Real beta = dt*theta*pop.charge/pop.mass;
+      // amrex::Print() << pop.name << " Beta: " << beta
+      //                << ", theta: " << theta
+      //                << ", charge: " << pop.charge
+      //                << ", mass: " << pop.mass << std::endl;
+      compute_j_E(j_E, beta, theta, B_fx, B_fy, B_fz, E_n, pContainer_list[nn], pop.charge*factor);
+      // amrex::Print() << "sub-current due to E_{n+1} + E_{n+1}: ";
+      // view_MultiFab(j_E);
    }
 }
 
@@ -157,8 +200,9 @@ void fillMassMatrices(amrex::LayoutData<matrix<amrex::Real>>& mat_mass, const in
 template <typename T>
 inline void fillMassMatrices_all(amrex::LayoutData<T>& mat_mass, const int nghost, const amrex::Real dt, const amrex::MultiFab& B_fx, const amrex::MultiFab& B_fy, const amrex::MultiFab& B_fz, std::vector<myPContainer>& pContainer_list, const std::vector<Population>& pop_list, const amrex::Real dV_inv) {
    for (size_t nn=0; nn<pContainer_list.size(); ++nn) {
-      amrex::Real beta = dt*pop_list[nn].charge/(2*pop_list[nn].mass);
-      fillMassMatrices(mat_mass, nghost, beta, B_fx, B_fy, B_fz, pContainer_list[nn], pop_list[nn]);
+      const auto pop = pop_list[nn];
+      amrex::Real beta = dt*pop.charge/(2*pop.mass);
+      fillMassMatrices(mat_mass, nghost, beta, B_fx, B_fy, B_fz, pContainer_list[nn], pop);
    }
 
    for (amrex::MFIter mfi(mat_mass); mfi.isValid(); ++mfi) {

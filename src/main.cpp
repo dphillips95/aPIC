@@ -91,7 +91,7 @@ int main(int argc, char* argv[]) {
          
          inp_s.get("steps", steps);
          inp_s.get("dt", dt);
-         inp_s.getarr("pop_list", pop_name_list);
+         inp_s.queryarr("pop_list", pop_name_list);
          inp_s.query("theta", theta);
          inp_s.query("rtol", rtol);
          inp_s.query("atol", atol);
@@ -205,7 +205,7 @@ int main(int argc, char* argv[]) {
             pop_list.push_back(tmp);
          }
       }
-
+      
       const size_t pop_count = pop_list.size();
 
       // Add process rank to seed to ensure each process has a different seed
@@ -246,25 +246,14 @@ int main(int argc, char* argv[]) {
       DistributionMapping dm(ba_c);
 
       // Vector containing B_f and E_n states
-      BE
-         EM_state(ba_n, dm, nghost, geom.periodicity()),
-         // Mid state; used for particle acceleration, no need for ghost cells
-         // (Unless particle cloud is larger than one cell length)
-         EM_state_mid(ba_n, dm, 0, geom.periodicity());
+      BE EM_state(ba_n, dm, nghost, geom.periodicity());
       
       MultiFab* E_n = &EM_state.getE_n();
-      MultiFab* E_n_mid = &EM_state_mid.getE_n();
       
       std::array<MultiFab*,3> B_f = {
          &EM_state.getB_fx(),
          &EM_state.getB_fy(),
          &EM_state.getB_fz()
-      };
-      
-      std::array<MultiFab*,3> B_f_mid = {
-         &EM_state_mid.getB_fx(),
-         &EM_state_mid.getB_fy(),
-         &EM_state_mid.getB_fz()
       };
       
       // Vector of particle containers
@@ -282,7 +271,8 @@ int main(int argc, char* argv[]) {
          curl_E_fx(ba_fx, dm, 3, 0),
          curl_E_fy(ba_fy, dm, 3, 0),
          curl_E_fz(ba_fz, dm, 3, 0),
-         jHat(ba_n, dm, 3, 0);
+         jHat(ba_n, dm, 3, 0),
+         E_n_mid(ba_n, dm, 3, 0);
       
       curl_B_n.setVal(0.0);
       curl_E_fx.setVal(0.0);
@@ -508,25 +498,30 @@ int main(int argc, char* argv[]) {
       Real time = 0.0;
 
       // Decenter particles (probably not strictly necessary)
-      particlePusher_all(pContainer_list, -dt/2);
+      particleMover_all(pContainer_list, -dt/2);
       
       for (int step=0; step<steps; ++step) {
          Print()  << std::endl << "Step: " << step << std::endl;
 
-         // Copy previous state into mid-state
-         BE::Copy(EM_state_mid, EM_state, 0);
-         
+         // Copy previous E_n into mid-state (used for particle accel.)
+         MultiFab::Copy(E_n_mid, EM_state.getE_n_const(), 0, 0, 3, 0);
+
+         // Output data
          if (step % save_steps == 0) {
             saveState(step, time, EM_state, pContainer_list, pop_list, geom, datalog);
          }
          
          // Advance particle positions
-         particlePusher_all(pContainer_list, dt);
+         particleMover_all(pContainer_list, dt);
          
          // Calculate rotated current jHat
          jHat.setVal(0.0);
-         // compute_jHat_all(jHat, dt, theta, *B_f[0], *B_f[1], *B_f[2], pContainer_list, pop_list, dV_inv);
-         compute_jHat_pr_all(jHat, dt, theta, *B_f[0], *B_f[1], *B_f[2], *E_n, pContainer_list, pop_list, dV_inv);
+#if USE_CURRENT_MATRIX
+         // If we compute the mass matrices, then it is better to use them to calculate the current due to E_n instead of together with jHat
+         compute_jHat_all(jHat, dt, theta, *B_f[0], *B_f[1], *B_f[2], pContainer_list, pop_list, dV_inv);
+#else
+         compute_jHat_star_all(jHat, dt, theta, *B_f[0], *B_f[1], *B_f[2], *E_n, pContainer_list, pop_list, dV_inv);
+#endif
 
 #if USE_CURRENT_MATRIX
          // Compute mass matrices
@@ -535,6 +530,9 @@ int main(int argc, char* argv[]) {
          }
          fillMassMatrices_all(matA_E2E, nghost, dt, *B_f[0], *B_f[1], *B_f[2], pContainer_list, pop_list, dV_inv);
 #endif
+
+         // Print() << "jHat + E_n contributions: ";
+         // view_MultiFab(jHat);
          
          gmres_step(EM_state, jHat, pop_list, pContainer_list,
 #if USE_CURLB_MATRIX
@@ -565,17 +563,17 @@ int main(int argc, char* argv[]) {
          }
 
          // Combine previous E with new E to create mid-step E for particle accelerator
-         EM_state_mid.mult_En(1 - theta);
-         BE::Saxpy_En(EM_state_mid, EM_state.getE_n_const(), 0, theta);
+         E_n_mid.mult(1 - theta);
+         MultiFab::Saxpy(E_n_mid, theta, EM_state.getE_n_const(), 0, 0, 3, 0);
          
-         particleAccelerator_all(pContainer_list, pop_list, *B_f_mid[0], *B_f_mid[1], *B_f_mid[2], *E_n_mid, dt, theta);
+         particleAccelerator_all(pContainer_list, pop_list, *B_f[0], *B_f[1], *B_f[2], E_n_mid, dt, theta);
          
          time += dt;
 
       }
       saveState(steps, time, EM_state, pContainer_list, pop_list, geom, datalog);
    }
-      
+   
    BL_PROFILE_VAR_STOP(pmain);
    Finalize();
 }

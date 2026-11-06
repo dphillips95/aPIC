@@ -25,6 +25,7 @@ Author(s): David Phillips, Ilja Honkonen
 #ifndef MATH_FUNCTIONS_H_
 #define MATH_FUNCTIONS_H_
 
+#include <AMReX_REAL.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_Print.H>
 
